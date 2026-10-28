@@ -1,1 +1,1 @@
-# gyp_mayoreo_QA
+# GYP_Mayoreo
