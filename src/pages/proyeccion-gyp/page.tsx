@@ -10,6 +10,7 @@ import {
 } from './engine';
 import { CIFRAS_VALIDADAS, EMPRESAS } from './seed';
 import { construirFilasEscenarios, datosDelCorte } from './salida';
+import { aplicarHistoriaPorCuenta, type HistoriaDeCuenta } from './destino';
 import {
   construirDesdeSemilla,
   cargarDesdeSupabase,
@@ -167,8 +168,37 @@ export default function ProyeccionGypPage() {
         presupuesto: pptoPorConcepto.get(kk(x.empresa, x.concepto)) ?? null,
       });
     });
+
+    // ── C1 · Cada cuenta con SU historia, y el concepto estima «el resto» ──
+    //
+    // El defecto: una regla de nivel 'cuenta' recibía `data.series[empresa|
+    // concepto]`, es decir la historia del CONCEPTO ENTERO. Abrir Gastos Varios
+    // de Beval en 5 cuentas con «Lo típico» daba 74.414 en CADA cuenta —el
+    // concepto completo, cinco veces— y el concepto seguía estimando sus 74.414
+    // encima. El Semi Neto de Beval pasaba de 45.934 a −326.135.
+    //
+    // La corrección es la que ya estaba diseñada en destino.ts (CP-21) y nunca
+    // se conectó: cada cuenta usa su propia serie de `gyp_historico_cuenta`, y
+    // el concepto estima `concepto − Σ cuentas con regla propia`, de modo que
+    // «reglas por cuenta + resto» vuelve a sumar el total del concepto.
+    //
+    // Las reglas ADICIONALES (CP-22) no entran aquí: se suman al concepto y no
+    // descuentan historia. `insumosDelRestoDeReglas` ya las distingue por nivel.
+    // La lógica vive en `aplicarHistoriaPorCuenta` (destino.ts), fuera del
+    // componente, para que se pueda probar sola: aquí dentro no habría forma de
+    // cubrirla con un test (el proyecto no tiene montaje de componentes).
+    const historia = new Map<string, HistoriaDeCuenta>();
+    detalleCuenta.forEach((f) => {
+      historia.set(f.combinada, {
+        combinada: f.combinada,
+        serie: (f.meses ?? []).map((v) => (v == null ? NaN : v)),
+        acum: f.acumulado ?? 0,
+      });
+    });
+    aplicarHistoriaPorCuenta(out, historia, (r) => metodos[r.metodo]?.op ?? 'promedio');
+
     return out;
-  }, [data.reglasBase, data.series, overrides, nuevas, pptoPorConcepto]);
+  }, [data.reglasBase, data.series, overrides, nuevas, pptoPorConcepto, detalleCuenta, metodos]);
 
   // ── C3 · Datos del corte para el causado por días calendario (§E) ──
   //
