@@ -169,6 +169,7 @@ export default function ProyeccionGypPage() {
       });
     });
     nuevas.forEach((x, i) => {
+      if (x.borrada) return; // P6 · borrada logicamente: fuera del calculo
       const sc = data.series[kk(x.empresa, x.concepto)] || { a: 0, s: [] };
       out.push({
         key: 'n' + i,
@@ -329,9 +330,20 @@ export default function ProyeccionGypPage() {
       const k = claveDe(r, i);
       if (r.eliminada && overrides[k]?.borrada !== false) borradas.add(k);
     });
+    // P6 · Las reglas NUEVAS borradas tambien van al pie con «Restaurar».
+    const deNuevas = nuevas
+      .map((x, i) => ({ x, i }))
+      .filter(({ x }) => x.borrada)
+      .map(({ x, i }) => ({
+        key: 'n' + i,
+        empresa: x.empresa,
+        concepto: x.concepto,
+        combinada: x.combinada,
+      }));
+
     const indiceDe = new Map<string, number>();
     data.reglasBase.forEach((r, i) => indiceDe.set(claveDe(r, i), i));
-    return [...borradas].map((k) => {
+    return [...deNuevas, ...[...borradas].map((k) => {
       const i = indiceDe.get(k);
       const r = i === undefined ? undefined : base[i];
       return {
@@ -340,8 +352,8 @@ export default function ProyeccionGypPage() {
         concepto: r?.concepto ?? '',
         combinada: r?.combinada ?? k,
       };
-    });
-  }, [overrides, data.reglasBase, data.series]);
+    })];
+  }, [overrides, data.reglasBase, data.series, nuevas]);
 
   const tot = useCallback(
     (k: keyof AgregadoEmpresa) => EMPRESAS.reduce((a, e) => a + (agg[e]?.[k] || 0), 0),
@@ -574,7 +586,9 @@ export default function ProyeccionGypPage() {
     if (/^n\d+$/.test(key)) {
       const i = +key.slice(1);
       const x = nuevas[i];
-      setNuevas((prev) => prev.filter((_, j) => j !== i));
+      // P6 · Borrado LOGICO: se marca, no se quita. Asi aparece en el pie con
+      // «Restaurar», igual que las de la base. Antes se perdia para siempre.
+      setNuevas((prev) => prev.map((y, j) => (j === i ? { ...y, borrada: true } : y)));
       if (x?.id != null) eliminarReglaDb(x.id, x.rev ?? 0).then((r) => avisarEscritura(r, 'la regla'));
     } else {
       setOverrides((prev) => ({ ...prev, [key]: { ...prev[key], borrada: true } }));
@@ -587,6 +601,11 @@ export default function ProyeccionGypPage() {
     }
   };
   const restaurarRegla = (key: string) => {
+    if (/^n\d+$/.test(key)) {
+      const i = +key.slice(1);
+      setNuevas((prev) => prev.map((y, j) => (j === i ? { ...y, borrada: false } : y)));
+      return;
+    }
     setOverrides((prev) => ({ ...prev, [key]: { ...prev[key], borrada: false } }));
     const b = baseDe(key);
     if (b?.id != null)

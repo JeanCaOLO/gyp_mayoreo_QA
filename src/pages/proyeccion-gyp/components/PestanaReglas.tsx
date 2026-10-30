@@ -55,6 +55,13 @@ export interface Override {
 }
 
 export interface NuevaRegla extends ReglaBase {
+  /**
+   * P6 · Borrado LOGICO, igual que las reglas base. Antes una regla nueva se
+   * quitaba del array y no habia forma de recuperarla: el boton "Restaurar" del
+   * pie solo servia para las de la base, asi que borrar una recien creada era
+   * irreversible y sin aviso.
+   */
+  borrada?: boolean;
   n?: number | null;
   nombre?: string | null;
   detalle?: string | null;

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   formula,
   type Base,
@@ -170,6 +170,10 @@ export default function PanelRegla({
    * persona escribio; al salir se vuelve a formatear.
    */
   const [txtValor, setTxtValor] = useState<string | null>(null);
+
+  // P4 · ¿La empresa tiene venta con historia? Prisma vive de la Colocación y
+  // no la tiene, así que «Según la venta» allí siempre da 0.
+  const hayVenta = !!(serieVenta && serieVenta.some((v) => Number.isFinite(v) && v !== 0));
   const [creando, setCreando] = useState(false);
 
   const set = <K extends keyof Borrador>(k: K, v: Borrador[K]) => setB((p) => ({ ...p, [k]: v }));
@@ -208,12 +212,48 @@ export default function PanelRegla({
     [serieConcepto, regla, metodos, serieVenta],
   );
 
+  /**
+   * P4 · Solo se ofrecen las opciones que APLICAN a esta regla.
+   *
+   * Antes se podia poner "Del Cargo Fijo del grupo" o "% del Semi Neto" en
+   * cualquier concepto, o "Segun la venta" en Prisma —que vive de la
+   * Colocacion y no tiene regla de Ventas, asi que da 0—. Una opcion que
+   * siempre devuelve cero no es una opcion: es una trampa.
+   *
+   * Las reglas son las de `opcionesPara` del prototipo:
+   *   - % del Semi Neto   -> solo si la regla es del grupo SEMI
+   *   - Del Cargo Fijo    -> solo para el concepto Colocacion
+   *   - Segun la venta / % de la venta -> solo si la empresa tiene venta con
+   *                          historia y la regla NO es la de Ventas
+   *   - Armar mi formula  -> no para Colocacion
+   * El metodo que la regla YA tiene se ofrece siempre, para no dejarla sin
+   * poder volver a su estado anterior.
+   */
+  const aplica = useCallback(
+    (mm: Metodo): boolean => {
+      if (mm.id === regla.metodo) return true; // el actual, siempre
+      // `pct_semineto` y `pct_venta` NO son operaciones: las dos son
+      // 'porcentaje' y se distinguen por su base. Por eso van por id.
+      if (mm.id === 'm_pct_semineto') return regla.grupo === 'SEMI';
+      if (mm.op === 'derivada') return regla.concepto === 'Colocacion';
+      if (mm.op === 'ratio_venta' || mm.id === 'm_pct_venta') {
+        return hayVenta && regla.concepto !== 'Ventas';
+      }
+      if (mm.op === 'formula_venta') return regla.concepto === 'Ventas';
+      return true;
+    },
+    [regla.metodo, regla.grupo, regla.concepto, hayVenta],
+  );
+
   // Las tarjetas de historia ya cubren los métodos de fábrica de esas
   // operaciones; «Otras formas» lista el resto (sin historia: todos).
   const otrasFormas = useMemo(() => {
-    if (rec.errores.length === 0) return metodosList;
-    return metodosList.filter((mm) => !mm.fijo || !OPS_CON_TARJETA.includes(mm.op));
-  }, [metodosList, rec.errores.length]);
+    const base =
+      rec.errores.length === 0
+        ? metodosList
+        : metodosList.filter((mm) => !mm.fijo || !OPS_CON_TARJETA.includes(mm.op));
+    return base.filter(aplica);
+  }, [metodosList, rec.errores.length, aplica]);
 
   // Cambios del borrador: los usan «Así quedaría» (sin guardar) y Guardar.
   const cambios = useMemo<Partial<Override>>(() => {
