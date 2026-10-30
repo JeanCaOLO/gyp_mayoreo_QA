@@ -111,9 +111,37 @@ deliberado: así la primera corrida te enseña los recuentos sin cambiar nada.
    | `m_promedio` | 6 |
 
 3. Si cuadran, cambiá el final: comentá `rollback;` y descomentá `commit;`.
-4. Abrí la aplicación y comprobá el Semi Neto proyectado. El documento dice que
-   debe pasar de **1.188.929 a 486.541**. **Si no da eso, no sigas** — avisá y
-   lo revisamos antes de tocar nada más.
+4. Abrí la aplicación y comprobá el Semi Neto proyectado.
+
+### APLICADO EN QA EL 2026-10-30 — y qué pasó con las cifras
+
+Los recuentos de método **cuadraron exactos**: la migración asigna 29 mediana,
+14 último, 11 proporción de la venta, 9 % sobre venta y 6 promedio = 69 cambios,
+idéntico a lo que declara el documento. (Ojo: el documento cuenta *cambios*, no
+totales finales. Tras aplicar, `m_pct_venta` queda en 20 = 9 cambiadas + 11 que
+ya lo eran y no se tocan.)
+
+El **Semi Neto no cuadró**, y el punto de partida tampoco:
+
+| Semi Neto | documento antes | **QA antes** | documento después | **QA después** |
+|---|---:|---:|---:|---:|
+| Proyectado | 1.188.929 | **514.930** | 486.541 | **733.124** |
+| Causado | −888.523 | **330.497** | 211.168 | **626.306** |
+
+La columna «QA antes» se midió restaurando las reglas desde `respaldo_regla_pre_c12`
+y recalculando, para poder comparar como corresponde.
+
+**Lectura:** el documento se calculó sobre un conjunto de datos distinto al que
+tiene QA hoy. No es que la migración haga algo diferente de lo que dice: lo que
+no coincide es la base. Además la dirección difiere — en el documento el
+proyectado BAJA y el causado cambia de signo; en QA los dos SUBEN.
+
+**Esto hay que resolverlo con Control antes de pensar en productivo.** La
+pregunta no es si la migración está bien transcrita (lo está), sino de qué
+extracción salieron las cifras del documento y por qué QA parte de otro número.
+
+Respaldos en QA para volver atrás en cualquier momento:
+`respaldo_regla_pre_c12` (estado original) y `respaldo_regla_post_c12` (aplicado).
 
 ---
 
