@@ -1069,7 +1069,14 @@ serve(async (req) => {
 				log
 			});
 		}
-		const periodo = typeof body.periodo === "string" && body.periodo || prog.periodo || periodoVigente(zona);
+		let periodoConfig = null;
+		{
+			const { data: cfg, error: eCfg } = await db.from("proyeccion_config").select("periodo_trabajo").eq("id", 1).maybeSingle();
+			if (eCfg) log.push(`aviso: no se pudo leer proyeccion_config (${eCfg.message}).`);
+			else periodoConfig = cfg?.periodo_trabajo ?? null;
+		}
+		const periodo = typeof body.periodo === "string" && body.periodo || periodoConfig || prog.periodo || periodoVigente(zona);
+		if (!periodoConfig && !prog.periodo) log.push(`aviso: sin mes de trabajo fijado; se usa el del calendario (${periodo}).`);
 		log.push(`periodo de trabajo: ${periodo} (zona ${zona})`);
 		const limiteColgada = (/* @__PURE__ */ new Date(Date.now() - CORRIDA_COLGADA_MS)).toISOString();
 		await db.from("proyeccion_corrida").update({

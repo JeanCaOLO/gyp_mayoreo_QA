@@ -630,11 +630,39 @@ serve(async (req: Request) => {
       if (!t.toca) return json({ ok: true, ejecutada: false, motivo: "fuera_de_horario", log });
     }
 
-    // Periodo: body → config → mes vigente en Caracas.
+    // Periodo: body -> proyeccion_config -> programacion -> mes del calendario.
+    //
+    // `proyeccion_config.periodo_trabajo` es el mes que fijo el equipo en la
+    // aplicacion, y manda. Antes no se consultaba: con `prog.periodo` en NULL
+    // se caia a `periodoVigente()`, o sea al mes del calendario, y el 1 de
+    // noviembre la corrida habria saltado sola a noviembre mientras la
+    // pantalla seguia cerrando octubre. Nadie lo habria visto como un error:
+    // se habria publicado un mes vacio encima del que se estaba trabajando.
+    //
+    // El mes NO avanza solo. Avanza cuando alguien lo cambia en la aplicacion.
+    let periodoConfig: string | null = null;
+    {
+      const { data: cfg, error: eCfg } = await db
+        .from("proyeccion_config")
+        .select("periodo_trabajo")
+        .eq("id", 1)
+        .maybeSingle();
+      // Si la tabla aun no existe se sigue con las fuentes de antes; cualquier
+      // otro error se registra, porque caer al calendario en silencio es justo
+      // lo que se quiere evitar.
+      if (eCfg) log.push(`aviso: no se pudo leer proyeccion_config (${eCfg.message}).`);
+      else periodoConfig = (cfg as { periodo_trabajo: string } | null)?.periodo_trabajo ?? null;
+    }
     const periodo: string =
       (typeof body.periodo === "string" && body.periodo) ||
+      periodoConfig ||
       prog.periodo ||
       periodoVigente(zona);
+    if (!periodoConfig && !prog.periodo) {
+      log.push(
+        `aviso: sin mes de trabajo fijado; se usa el del calendario (${periodo}).`,
+      );
+    }
     log.push(`periodo de trabajo: ${periodo} (zona ${zona})`);
 
     // 1. GUARDIA DE SOLAPAMIENTO (CP-56 #6 / R-27.7).

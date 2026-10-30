@@ -22,6 +22,7 @@ import {
   cargarDesdeSupabase,
   cargarDatosDetalle,
   cargarMesesConDatos,
+  cargarMesesPreparados,
   cargarFormulasComoMetodos,
   leerMesDeTrabajo,
   guardarMesDeTrabajo,
@@ -51,6 +52,7 @@ import {
   type CambiosProgramacion,
   type Corrida,
 } from './data';
+import { mesesSeleccionables, hoyISO } from './meses';
 import SelloFrescura from './components/SelloFrescura';
 import KpiHeader from './components/KpiHeader';
 import PestanaParametros, {
@@ -105,6 +107,7 @@ export default function ProyeccionGypPage() {
   // P1 · Meses que de verdad tienen datos extraídos, y el `rev` del mes de
   // trabajo guardado (para el bloqueo optimista al cambiarlo).
   const [mesesConDatos, setMesesConDatos] = useState<string[]>([]);
+  const [mesesPreparados, setMesesPreparados] = useState<Set<string>>(new Set());
   const [revMes, setRevMes] = useState(0);
   // C9 · Formulas propias convertidas a metodos (ver cargarFormulasComoMetodos).
   const [metodosFormula, setMetodosFormula] = useState<Record<string, Metodo>>({});
@@ -268,15 +271,24 @@ export default function ProyeccionGypPage() {
   // `proyeccion_parametro`, que guarda un único periodo); los demás meses se
   // muestran como terminados, que es lo que son.
   const mesesParaElegir = useMemo<EstadoMes[]>(() => {
-    if (!mesesConDatos.length) return [];
     const diasV = EMPRESAS.map((e) => params[e]?.dias).find((d) => d != null) ?? null;
     const transV = EMPRESAS.map((e) => params[e]?.trans).find((t) => t != null) ?? null;
-    return mesesConDatos.map((m) =>
-      m === data.periodo
-        ? estadoDelPeriodo(m, data.corte, data.fuente, diasV, transV)
-        : { periodo: m, corte: null, fase: 'terminado' as const },
-    );
-  }, [mesesConDatos, data.periodo, data.corte, data.fuente, params]);
+    const conDatos = new Set(mesesConDatos);
+    // Solo el mes en curso y el anterior (mas el fijado, si quedo fuera). La
+    // lista NO sale de los meses con datos: `gyp_historico_mensual` guarda diez
+    // meses y ofrecerlos todos invita a trabajar sobre un mes que no tiene ni
+    // reglas ni tasa.
+    return mesesSeleccionables(hoyISO(), data.periodo).map((m) => {
+      if (m === data.periodo) {
+        return estadoDelPeriodo(m, data.corte, data.fuente, diasV, transV);
+      }
+      // Un mes solo esta listo si tiene reglas Y parametros. Con historia pero
+      // sin ellos se muestra como «todavia sin datos», que es la verdad: no se
+      // puede proyectar ni publicar.
+      const listo = conDatos.has(m) && mesesPreparados.has(m);
+      return { periodo: m, corte: null, fase: listo ? ('terminado' as const) : ('sin_datos' as const) };
+    });
+  }, [mesesConDatos, mesesPreparados, data.periodo, data.corte, data.fuente, params]);
 
   // ── Cálculo de los DOS escenarios (§H). La cabecera de KPIs necesita ambos. ──
   const escenarios = useMemo(
@@ -394,6 +406,9 @@ export default function ProyeccionGypPage() {
       // trabajas». Degrada a lista vacía: el componente cae a mostrar solo el
       // mes vigente, que es lo que hacía antes.
       cargarMesesConDatos().then(setMesesConDatos).catch(() => setMesesConDatos([]));
+      cargarMesesPreparados()
+        .then(setMesesPreparados)
+        .catch(() => setMesesPreparados(new Set()));
       // C9 · Las formulas propias entran como metodos mas, para que una regla
       // con `formula_id` las pueda usar. Sin esto nunca llegaban al motor.
       cargarFormulasComoMetodos().then(setMetodosFormula).catch(() => setMetodosFormula({}));

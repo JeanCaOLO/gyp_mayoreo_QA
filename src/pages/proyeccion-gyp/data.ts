@@ -1894,3 +1894,28 @@ export async function cargarMesesConDatos(limite = 12): Promise<string[]> {
   if (!filas) return [];
   return [...new Set(filas.map((f) => f.periodo))].sort().reverse().slice(0, limite);
 }
+
+/**
+ * De qué meses se puede PROYECTAR de verdad, no solo cuáles tienen historia.
+ *
+ * Tener filas en `gyp_historico_mensual` no alcanza: para trabajar un mes hacen
+ * falta sus reglas (`proyeccion_regla`) y sus parámetros (`proyeccion_parametro`,
+ * que trae la tasa y los días hábiles). Sin reglas no hay nada que proyectar, y
+ * sin tasa la publicación se detiene por la guardia D8.
+ *
+ * Se usa para marcar en el selector los meses que todavía no están preparados,
+ * en vez de ofrecerlos como si estuvieran listos.
+ */
+export async function cargarMesesPreparados(): Promise<Set<string>> {
+  const [reglas, params] = await Promise.all([
+    leerPaginado<{ periodo: string }>((desde, hasta) =>
+      supabase.from('proyeccion_regla').select('periodo').range(desde, hasta),
+    ),
+    leerPaginado<{ periodo: string }>((desde, hasta) =>
+      supabase.from('proyeccion_parametro').select('periodo').range(desde, hasta),
+    ),
+  ]);
+  if (!reglas || !params) return new Set();
+  const conParams = new Set(params.map((f) => f.periodo));
+  return new Set(reglas.map((f) => f.periodo).filter((p) => conParams.has(p)));
+}
