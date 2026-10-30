@@ -23,6 +23,7 @@ import {
   cargarDatosDetalle,
   cargarMesesConDatos,
   cargarMesesPreparados,
+  clonarReglas,
   cargarFormulasComoMetodos,
   leerMesDeTrabajo,
   guardarMesDeTrabajo,
@@ -783,6 +784,27 @@ export default function ProyeccionGypPage() {
       // decía «para todos» y al recargar volvía atrás. Si la tabla de
       // configuración todavía no existe, el cambio vale para esta sesión y se
       // dice claramente, en vez de prometer algo que no pasó.
+      // Un mes sin reglas no se puede proyectar: saldria la pantalla vacia y
+      // sin explicacion. En vez de eso se arrastran las del mes vigente, que es
+      // el criterio acordado — el mes nuevo arranca con lo mismo que el anterior
+      // y se cambia solo lo que haga falta.
+      //
+      // Es explicito y queda registrado quien lo hizo: las reglas no aparecen
+      // solas. `clonar_reglas` no pisa nada, asi que repetirlo no borra ajustes.
+      if (!mesesPreparados.has(nuevoPeriodo)) {
+        const anterior = data.periodo;
+        clonarReglas(anterior, nuevoPeriodo).then((r) => {
+          if (!r.ok) {
+            addToast('error', `No se pudieron arrastrar las reglas a ${nuevoPeriodo}: ${r.motivo}`);
+            return;
+          }
+          if (r.copiadas > 0) {
+            addToast('info', `${nuevoPeriodo} arranca con las ${r.copiadas} reglas de ${anterior}.`);
+            setMesesPreparados((p) => new Set(p).add(nuevoPeriodo));
+          }
+        });
+      }
+
       guardarMesDeTrabajo(nuevoPeriodo, revMes).then((r) => {
         if (r.ok) {
           setRevMes(r.rev ?? revMes + 1);
@@ -794,7 +816,7 @@ export default function ProyeccionGypPage() {
         }
       });
     },
-    [data.periodo, addToast, revMes],
+    [data.periodo, addToast, revMes, mesesPreparados],
   );
 
   // El factor se guarda POR MES (CP-33 / CP-37). Actualiza el estado local y lo

@@ -1906,6 +1906,30 @@ export async function cargarMesesConDatos(limite = 12): Promise<string[]> {
  * Se usa para marcar en el selector los meses que todavía no están preparados,
  * en vez de ofrecerlos como si estuvieran listos.
  */
+/**
+ * Arrastra las reglas de un periodo a otro (RPC `clonar_reglas`).
+ *
+ * Un mes sin reglas no se puede proyectar. El criterio es que el mes nuevo
+ * ARRANCA con lo mismo que el anterior y el usuario cambia solo lo que quiera,
+ * no que empiece en blanco.
+ *
+ * No pisa nada: una regla que ya exista en el destino se respeta. Llamarlo dos
+ * veces no deshace ningun ajuste manual.
+ */
+export async function clonarReglas(
+  origen: string,
+  destino: string,
+): Promise<{ ok: boolean; copiadas?: number; yaExistian?: number; motivo?: string }> {
+  const { data, error } = await supabase.rpc('clonar_reglas', {
+    p_origen: origen,
+    p_destino: destino,
+    p_autor: (await autorActual()) ?? 'clonar_reglas',
+  });
+  if (error) return { ok: false, motivo: error.message };
+  const r = (data ?? {}) as { copiadas?: number; ya_existian?: number };
+  return { ok: true, copiadas: r.copiadas ?? 0, yaExistian: r.ya_existian ?? 0 };
+}
+
 export async function cargarMesesPreparados(): Promise<Set<string>> {
   const [reglas, params] = await Promise.all([
     leerPaginado<{ periodo: string }>((desde, hasta) =>
