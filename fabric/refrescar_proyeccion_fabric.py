@@ -548,18 +548,41 @@ def extraer_periodo(periodo_):
 
     # --- 6. CP-10 · Presupuesto del periodo por cuenta (presupuesto_gyp_v2) ---
     #     Viaja con la extracción en gyp_historico_cuenta.presupuesto.
-    ppto = {}   # combinada -> presupuesto USD del periodo
+    ppto = {}        # combinada -> presupuesto USD del periodo
+    ppto_info = {}   # combinada -> identidad, para las que NO tienen movimiento
     try:
+        # LEFT JOIN a propósito, NO join normal: 77 de las 167 combinadas con
+        # presupuesto de 2026-10 no están en el catálogo. Con un join normal se
+        # perderían y el total pasaría de 1.957.303,34 a −591.660,57 sin que
+        # nadie lo note (la trampa 2 del proyecto: el join se rompe en silencio).
+        # El catálogo solo se usa para IDENTIFICAR, nunca para filtrar el monto.
         for f in consultar("""
-    SELECT p.Combinada AS comb, SUM(COALESCE(p.Monto_USD,0)) AS usd
+    SELECT p.Combinada AS comb, c.Empresa AS emp,
+           p.Cuenta AS cuenta, p.Centro_Costo AS centro, {s} AS slot,
+           SUM(COALESCE(p.Monto_USD,0)) AS usd
     FROM Gold.dbo.presupuesto_gyp_v2 p
-    WHERE p.FECHA >= '{i}' AND p.FECHA < '{f}'
-    GROUP BY p.Combinada
-    """.format(i=ini, f=fin)):
-            ppto[f['comb']] = round(num(f['usd']), 2)
-        print('  presupuesto     : %d cuentas (presupuesto_gyp_v2)' % len(ppto))
+    LEFT JOIN Gold.dbo.catalogo_gyp_general_v2 c ON c.Combinada = p.Combinada
+    WHERE p.Fecha >= '{i}' AND p.Fecha < '{f}'
+    GROUP BY p.Combinada, c.Empresa, p.Cuenta, p.Centro_Costo, {s}
+    """.format(s=SLOT, i=ini, f=fin)):
+            comb = f['comb']
+            ppto[comb] = round(ppto.get(comb, 0.0) + num(f['usd']), 2)
+            if f.get('emp'):
+                ppto_info[comb] = {
+                    'empresa': f['emp'], 'cuenta': f['cuenta'],
+                    'centro_costo': f['centro'],
+                    'concepto': CONCEPTO.get(f['slot'], f['slot']),
+                }
+        print('  presupuesto     : %d cuentas (presupuesto_gyp_v2), '
+              '%d con catalogo' % (len(ppto), len(ppto_info)))
     except Exception as e:
-        print('  (sin presupuesto del periodo: %s)' % e)
+        # NO se traga el error en silencio: un presupuesto en 0 se propaga a
+        # "Lo presupuestado", a la columna Presupuesto de Comparar y al reparto
+        # por presupuesto, y nadie lo atribuye a su causa. Se avisa fuerte.
+        print('  *** PRESUPUESTO EN 0 — la consulta fallo: %s' % e)
+        print('      El P&L va a mostrar presupuesto 0 en todas las empresas.')
+        ppto = {}
+        ppto_info = {}
 
     # --- 7. CP-11 · Detalle por cuenta (gyp_historico_cuenta + dim_cuenta) ---
     #     Acumulado del mes por Combinada (suma corregida CP-08) y los 12 meses
@@ -596,8 +619,16 @@ def extraer_periodo(periodo_):
         det_meses.setdefault(f['comb'], {})[f['mes']] = round(num(f['usd']), 2)
 
     detalle = []
-    for comb in sorted(set(det_acum) | set(det_meses)):
-        info = det_info.get(comb, {})
+    # Se incluyen también las cuentas que SOLO tienen presupuesto (sin movimiento
+    # en el mes ni en los 12 anteriores): sin ellas, "Lo presupuestado" y el
+    # reparto por presupuesto ignoran conceptos presupuestados que aún no
+    # gastaron. Solo entran las que el catálogo sabe clasificar: una cuenta sin
+    # concepto no se puede mostrar en el P&L.
+    solo_ppto = (set(ppto) & set(ppto_info)) - set(det_acum) - set(det_meses)
+    if solo_ppto:
+        print('  solo presupuesto: %d cuentas sin movimiento' % len(solo_ppto))
+    for comb in sorted(set(det_acum) | set(det_meses) | solo_ppto):
+        info = det_info.get(comb) or ppto_info.get(comb, {})
         meses_json = {m: det_meses.get(comb, {}).get(m, 0.0) for m in meses12}
         detalle.append({
             'periodo': periodo_,
@@ -667,10 +698,15 @@ def extraer_periodo(periodo_):
     # Guarda 1: la extracción trajo algo.
     if not acum and not serie:
         errores.append('la extracción no devolvió ningún concepto.')
-    # Guarda 2: el corte avanzó respecto al publicado (la que más duele, §7).
+    # Guarda 2: el corte no RETROCEDIÓ respecto al publicado (§7).
+    # D1: antes era `corte <= prev`, y eso congelaba el mes. Un corte IGUAL es
+    # normal y hay que reescribir: es el caso de los ajustes del cierre
+    # contable (en noviembre se corrigen asientos de octubre sin que el corte
+    # avance) y el de una segunda corrida el mismo día. Solo un corte que
+    # RETROCEDE delata una ingesta parada, y solo eso debe bloquear.
     prev = corte_publicado(periodo_)
-    if prev and corte <= prev:
-        errores.append('el corte NO avanzó (publicado %s, nuevo %s). '
+    if prev and corte < prev:
+        errores.append('el corte RETROCEDIÓ (publicado %s, nuevo %s). '
                        'Suele ser la ingesta parada; se conservan los datos buenos.'
                        % (prev, corte))
     if errores:

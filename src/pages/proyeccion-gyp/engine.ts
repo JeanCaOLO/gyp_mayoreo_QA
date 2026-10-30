@@ -708,9 +708,15 @@ export function calcular({
   };
 
   // Resuelve una referencia a otro concepto ya calculado de la misma empresa.
+  // C7: SUMA todas las reglas del concepto, no solo la primera. Un concepto
+  // puede tener varias reglas (la del concepto más las adicionales); con
+  // `findIndex`, un "5 % de Personal" dejaba fuera un bono adicional.
   const refConcepto = (empresa: string, concepto: string): number => {
-    const j = R.findIndex((x) => x.empresa === empresa && x.concepto === concepto);
-    return j >= 0 && hecho[j] ? val[j] : 0;
+    let total = 0;
+    R.forEach((x, j) => {
+      if (x.empresa === empresa && x.concepto === concepto && hecho[j]) total += val[j];
+    });
+    return total;
   };
 
   // Suma del Cargo Fijo de las demás empresas (para la derivada de Prisma).
@@ -774,7 +780,11 @@ export function calcular({
 
       val[i] = res;
       hecho[i] = true;
-      if (r.concepto === 'Ventas' || m.op === 'derivada') venta[r.empresa] = res;
+      // C2: SUMA, no asigna. Una segunda regla de Ventas (p. ej. un ajuste de
+      // −50.000) debe sumarse a la venta del concepto, no reemplazarla: si la
+      // pisa, los % sobre venta de toda la empresa se calculan sobre esa cifra.
+      if (r.concepto === 'Ventas' || m.op === 'derivada')
+        venta[r.empresa] = (venta[r.empresa] ?? 0) + res;
     });
     recalcular(); // cerrado el turno, se refresca la foto para el siguiente
   }

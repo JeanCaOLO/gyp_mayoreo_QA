@@ -75,6 +75,16 @@ export interface ReglaBase {
   eliminada?: boolean;
 }
 
+/**
+ * Tamaño de página para leer Supabase (D2).
+ *
+ * Supabase corta toda lectura en 1.000 filas y **no avisa**: devuelve 1.000
+ * filas sin error. Toda tabla que pueda pasar de ahí —`gyp_historico_mensual`
+ * (~1.300 y creciendo), `gyp_historico_cuenta` (~4.700 por mes), el catálogo y
+ * el presupuesto— tiene que leerse paginando con `.range()`.
+ */
+const TAM_PAGINA = 1000;
+
 /** Estado inicial 100% desde la semilla (sin red). Reproduce la aceptación. */
 export function construirDesdeSemilla(): ProyeccionData {
   const params: Record<string, Parametro> = {};
@@ -242,9 +252,22 @@ export async function cargarDesdeSupabase(
   }
 
   // Historia mensual (acumulado del mes + serie). Opcional: la foto embebida ya sirve.
-  const { data: hr } = await supabase
-    .from('gyp_historico_mensual')
-    .select('periodo,empresa,concepto,monto_usd,es_venta');
+  //
+  // D2: se lee PAGINADO. Supabase devuelve como mucho 1.000 filas y no avisa
+  // de que cortó. Esta tabla ya va por ~1.300 filas y crece un bloque cada mes,
+  // así que sin paginar las series salían incompletas —y distintas cada vez,
+  // según el orden que devolviera la base—. Un mes que falta no da error: da
+  // un hueco que el motor trata como "sin registro".
+  const hr: RowHistorico[] = [];
+  for (let desde = 0; ; desde += TAM_PAGINA) {
+    const { data: pagina } = await supabase
+      .from('gyp_historico_mensual')
+      .select('periodo,empresa,concepto,monto_usd,es_venta')
+      .range(desde, desde + TAM_PAGINA - 1);
+    if (!pagina || pagina.length === 0) break;
+    hr.push(...(pagina as RowHistorico[]));
+    if (pagina.length < TAM_PAGINA) break;
+  }
   if (hr && hr.length) {
     const series: Record<string, SerieCuenta> = {};
     const periodosOrden = [...new Set((hr as RowHistorico[]).map((h) => h.periodo))].sort();
@@ -262,6 +285,29 @@ export async function cargarDesdeSupabase(
     // Sólo reemplaza si la base trajo historia; si no, conserva la foto embebida.
     data.series = { ...seed.series, ...series };
     encontroAlgo = true;
+  }
+
+  // D7: el sello de la extracción sale de la bitácora, no de la semilla.
+  // Estaba escrito a mano ('2026-10-13 10:28') y la cabecera lo mostraba
+  // siempre igual. No es cosmético: la guarda "No publicar con datos viejos"
+  // comprueba si la extracción es del día, así que con el sello congelado
+  // omitiría TODAS las corridas programadas, y por un motivo invisible.
+  const { data: ult } = await supabase
+    .from('proyeccion_corrida')
+    .select('fin,inicio,corte')
+    .eq('periodo', periodo)
+    .eq('paso', 'extraccion')
+    .eq('estado', 'ok')
+    .order('inicio', { ascending: false })
+    .limit(1);
+  if (ult && ult.length) {
+    const fila = ult[0] as { fin: string | null; inicio: string; corte: string | null };
+    data.generado = (fila.fin ?? fila.inicio).slice(0, 16).replace('T', ' ');
+    if (fila.corte) data.corte = fila.corte;
+  } else {
+    // Sin bitácora no se inventa una fecha: se dice que no se sabe. Un sello
+    // falso es peor que ninguno, porque la guarda de frescura se lo cree.
+    data.generado = null;
   }
 
   if (!encontroAlgo) throw new Error('sin-datos');
