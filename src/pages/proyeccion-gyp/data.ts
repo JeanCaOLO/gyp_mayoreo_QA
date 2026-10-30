@@ -1896,17 +1896,6 @@ export async function cargarMesesConDatos(limite = 12): Promise<string[]> {
 }
 
 /**
- * De qué meses se puede PROYECTAR de verdad, no solo cuáles tienen historia.
- *
- * Tener filas en `gyp_historico_mensual` no alcanza: para trabajar un mes hacen
- * falta sus reglas (`proyeccion_regla`) y sus parámetros (`proyeccion_parametro`,
- * que trae la tasa y los días hábiles). Sin reglas no hay nada que proyectar, y
- * sin tasa la publicación se detiene por la guardia D8.
- *
- * Se usa para marcar en el selector los meses que todavía no están preparados,
- * en vez de ofrecerlos como si estuvieran listos.
- */
-/**
  * Arrastra las reglas de un periodo a otro (RPC `clonar_reglas`).
  *
  * Un mes sin reglas no se puede proyectar. El criterio es que el mes nuevo
@@ -1930,16 +1919,64 @@ export async function clonarReglas(
   return { ok: true, copiadas: r.copiadas ?? 0, yaExistian: r.ya_existian ?? 0 };
 }
 
-export async function cargarMesesPreparados(): Promise<Set<string>> {
+/** Lo que hace falta saber de un mes para poder ofrecerlo y describirlo. */
+export interface MesPreparado {
+  periodo: string;
+  /** Ultimo dia con datos. Sin el, la tarjeta no puede decir hasta cuando llega. */
+  corte: string | null;
+  diasHabiles: number | null;
+  transcurridos: number | null;
+}
+
+/**
+ * De qué meses se puede PROYECTAR de verdad, no solo cuáles tienen historia.
+ *
+ * Tener filas en `gyp_historico_mensual` no alcanza: para trabajar un mes hacen
+ * falta sus reglas (`proyeccion_regla`) y sus parámetros (`proyeccion_parametro`,
+ * que trae la tasa, los días hábiles y el corte). Sin reglas no hay nada que
+ * proyectar, y sin tasa la publicación se detiene por la guardia D8.
+ *
+ * Devuelve tambien el corte y los dias de cada mes, no solo si esta listo: la
+ * tarjeta del selector los necesita para decir «mes completo · datos al 30 sep»
+ * en vez de «todavia sin datos», que es lo que salia cuando solo se devolvia un
+ * conjunto de periodos.
+ */
+export async function cargarMesesPreparados(): Promise<Map<string, MesPreparado>> {
   const [reglas, params] = await Promise.all([
     leerPaginado<{ periodo: string }>((desde, hasta) =>
       supabase.from('proyeccion_regla').select('periodo').range(desde, hasta),
     ),
-    leerPaginado<{ periodo: string }>((desde, hasta) =>
-      supabase.from('proyeccion_parametro').select('periodo').range(desde, hasta),
+    leerPaginado<{
+      periodo: string;
+      corte: string | null;
+      dias_habiles_mes: number | null;
+      dias_transcurridos: number | null;
+    }>((desde, hasta) =>
+      supabase
+        .from('proyeccion_parametro')
+        .select('periodo,corte,dias_habiles_mes,dias_transcurridos')
+        .range(desde, hasta),
     ),
   ]);
-  if (!reglas || !params) return new Set();
-  const conParams = new Set(params.map((f) => f.periodo));
-  return new Set(reglas.map((f) => f.periodo).filter((p) => conParams.has(p)));
+  if (!reglas || !params) return new Map();
+  const conReglas = new Set(reglas.map((f) => f.periodo));
+
+  // Una fila por empresa, asi que se consolida: el corte mas atrasado de las
+  // seis es hasta donde se puede decir que el mes esta completo.
+  const porMes = new Map<string, MesPreparado>();
+  for (const f of params) {
+    if (!conReglas.has(f.periodo)) continue;
+    const previo = porMes.get(f.periodo);
+    if (!previo) {
+      porMes.set(f.periodo, {
+        periodo: f.periodo,
+        corte: f.corte,
+        diasHabiles: f.dias_habiles_mes,
+        transcurridos: f.dias_transcurridos,
+      });
+      continue;
+    }
+    if (f.corte && (!previo.corte || f.corte < previo.corte)) previo.corte = f.corte;
+  }
+  return porMes;
 }

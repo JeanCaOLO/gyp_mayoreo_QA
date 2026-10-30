@@ -23,6 +23,7 @@ import {
   cargarDatosDetalle,
   cargarMesesConDatos,
   cargarMesesPreparados,
+  type MesPreparado,
   clonarReglas,
   cargarFormulasComoMetodos,
   leerMesDeTrabajo,
@@ -108,7 +109,7 @@ export default function ProyeccionGypPage() {
   // P1 · Meses que de verdad tienen datos extraídos, y el `rev` del mes de
   // trabajo guardado (para el bloqueo optimista al cambiarlo).
   const [mesesConDatos, setMesesConDatos] = useState<string[]>([]);
-  const [mesesPreparados, setMesesPreparados] = useState<Set<string>>(new Set());
+  const [mesesPreparados, setMesesPreparados] = useState<Map<string, MesPreparado>>(new Map());
   const [revMes, setRevMes] = useState(0);
   // C9 · Formulas propias convertidas a metodos (ver cargarFormulasComoMetodos).
   const [metodosFormula, setMetodosFormula] = useState<Record<string, Metodo>>({});
@@ -286,8 +287,16 @@ export default function ProyeccionGypPage() {
       // Un mes solo esta listo si tiene reglas Y parametros. Con historia pero
       // sin ellos se muestra como «todavia sin datos», que es la verdad: no se
       // puede proyectar ni publicar.
-      const listo = conDatos.has(m) && mesesPreparados.has(m);
-      return { periodo: m, corte: null, fase: listo ? ('terminado' as const) : ('sin_datos' as const) };
+      // Un mes solo esta listo si tiene reglas Y parametros.
+      const prep = mesesPreparados.get(m);
+      if (!conDatos.has(m) || !prep) {
+        return { periodo: m, corte: null, fase: 'sin_datos' as const };
+      }
+      // Con su corte real se describe igual que el mes vigente: un mes cerrado
+      // sale «mes completo · datos al 30 sep». Antes se pasaba `corte: null` y
+      // `fraseEstadoMes` leia eso como «todavia sin datos» aunque la fase dijera
+      // lo contrario, asi que un mes preparado se veia como vacio.
+      return estadoDelPeriodo(m, prep.corte, 'db', prep.diasHabiles, prep.transcurridos);
     });
   }, [mesesConDatos, mesesPreparados, data.periodo, data.corte, data.fuente, params]);
 
@@ -409,7 +418,7 @@ export default function ProyeccionGypPage() {
       cargarMesesConDatos().then(setMesesConDatos).catch(() => setMesesConDatos([]));
       cargarMesesPreparados()
         .then(setMesesPreparados)
-        .catch(() => setMesesPreparados(new Set()));
+        .catch(() => setMesesPreparados(new Map()));
       // C9 · Las formulas propias entran como metodos mas, para que una regla
       // con `formula_id` las pueda usar. Sin esto nunca llegaban al motor.
       cargarFormulasComoMetodos().then(setMetodosFormula).catch(() => setMetodosFormula({}));
@@ -800,7 +809,12 @@ export default function ProyeccionGypPage() {
           }
           if (r.copiadas > 0) {
             addToast('info', `${nuevoPeriodo} arranca con las ${r.copiadas} reglas de ${anterior}.`);
-            setMesesPreparados((p) => new Set(p).add(nuevoPeriodo));
+            // Ya tiene reglas; el corte y los dias llegan en la proxima carga.
+            setMesesPreparados((p) =>
+              new Map(p).set(nuevoPeriodo, {
+                periodo: nuevoPeriodo, corte: null, diasHabiles: null, transcurridos: null,
+              }),
+            );
           }
         });
       }
