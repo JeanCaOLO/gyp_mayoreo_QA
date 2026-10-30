@@ -104,6 +104,20 @@ export default function ProyeccionGypPage() {
 
   const kk = (empresa: string, concepto: string) => empresa + '|' + concepto;
 
+  /**
+   * C11 · Clave UNICA de una regla base.
+   *
+   * Antes se usaba `empresa|concepto`, que NO es unica: un concepto puede tener
+   * su regla principal mas reglas adicionales (CP-22). Las dos compartian clave,
+   * asi que editar o eliminar la adicional arrastraba a la del concepto, y al
+   * reves. Ahora manda el `id` de la base; sin id (reglas de la semilla, que
+   * solo viven en pantalla) se usa la posicion, que dentro de una misma carga
+   * tambien es unica.
+   *
+   * Los componentes tratan `key` como identificador opaco: no lo parsean.
+   */
+  const claveDe = (r: { id?: number }, i: number) => (r.id != null ? 'b' + r.id : 'i' + i);
+
   // ── Métodos efectivos (fábrica + propios − borrados) ──
   const metodos = useMemo<Record<string, Metodo>>(() => {
     const m: Record<string, Metodo> = { ...data.metodos, ...metodosUser };
@@ -123,12 +137,13 @@ export default function ProyeccionGypPage() {
     const ensambladas = ensamblarReglas(data.reglasBase, data.series);
     const out: Regla[] = [];
     ensambladas.forEach((r, i) => {
-      const o = overrides[kk(r.empresa, r.concepto)] || {};
+      const clave = claveDe(data.reglasBase[i] ?? {}, i);
+      const o = overrides[clave] || {};
       // Borrada en pantalla, o borrada en la base y no restaurada (CP-31).
       if (o.borrada ?? data.reglasBase[i]?.eliminada) return;
       out.push({
         ...r,
-        key: kk(r.empresa, r.concepto),
+        key: clave,
         metodo: o.metodo || r.metodo,
         valor: o.valor !== undefined ? o.valor : r.valor,
         n: o.n !== undefined ? o.n : r.n,
@@ -278,20 +293,22 @@ export default function ProyeccionGypPage() {
     const base = ensamblarReglas(data.reglasBase, data.series);
     const borradas = new Set(Object.keys(overrides).filter((k) => overrides[k]?.borrada));
     // Las borradas en la base siguen en el pie hasta que se restauren.
-    data.reglasBase.forEach((r) => {
-      const k = kk(r.empresa, r.concepto);
+    data.reglasBase.forEach((r, i) => {
+      const k = claveDe(r, i);
       if (r.eliminada && overrides[k]?.borrada !== false) borradas.add(k);
     });
-    return [...borradas]
-      .map((k) => {
-        const r = base.find((x) => kk(x.empresa, x.concepto) === k);
-        return {
-          key: k,
-          empresa: r?.empresa ?? k.split('|')[0],
-          concepto: r?.concepto ?? k.split('|')[1],
-          combinada: r?.combinada ?? k,
-        };
-      });
+    const indiceDe = new Map<string, number>();
+    data.reglasBase.forEach((r, i) => indiceDe.set(claveDe(r, i), i));
+    return [...borradas].map((k) => {
+      const i = indiceDe.get(k);
+      const r = i === undefined ? undefined : base[i];
+      return {
+        key: k,
+        empresa: r?.empresa ?? '',
+        concepto: r?.concepto ?? '',
+        combinada: r?.combinada ?? k,
+      };
+    });
   }, [overrides, data.reglasBase, data.series]);
 
   const tot = useCallback(
@@ -326,6 +343,11 @@ export default function ProyeccionGypPage() {
         const nuevo = await cargarDesdeSupabase(seed.periodo, seed);
         setData(nuevo);
         setParams(nuevo.params);
+        // C10: las reglas nuevas que YA se guardaron (tienen id) vuelven dentro
+        // de `nuevo.reglasBase`. Si siguieran tambien en `nuevas`, cada una
+        // apareceria DOS veces: en los KPIs y en lo publicado. Se conservan solo
+        // las que no llegaron a persistirse, para no perder trabajo del usuario.
+        setNuevas((prev) => prev.filter((x) => x.id == null));
         if (manual)
           addToast(
             'success',
@@ -432,7 +454,7 @@ export default function ProyeccionGypPage() {
   // ── Persistencia de reglas (CP-37/38): cada cambio se escribe en
   //    proyeccion_regla con bloqueo optimista por `rev`. Las reglas de la semilla
   //    (sin `id`) solo cambian en pantalla. ──
-  const baseDe = (key: string) => data.reglasBase.find((r) => kk(r.empresa, r.concepto) === key);
+  const baseDe = (key: string) => data.reglasBase.find((r, i) => claveDe(r, i) === key);
 
   const fijarRev = (id: number, rev: number | undefined) => {
     if (rev === undefined) return;
