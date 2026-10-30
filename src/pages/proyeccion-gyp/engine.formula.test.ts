@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { evaluarMetodoV2 } from './engine';
-import type { MetodoV2, CtxPaso, Regla, Parametro } from './engine';
+import type { Metodo, MetodoV2, CtxPaso, Regla, Parametro } from './engine';
 
 const regla = { empresa: 'Beval', concepto: 'X', valor: null, serie: [], acum: 0 } as unknown as Regla;
 const ctx = {
