@@ -551,23 +551,33 @@ def extraer_periodo(periodo_):
     ppto = {}        # combinada -> presupuesto USD del periodo
     ppto_info = {}   # combinada -> identidad, para las que NO tienen movimiento
     try:
-        # LEFT JOIN a propósito, NO join normal: 77 de las 167 combinadas con
-        # presupuesto de 2026-10 no están en el catálogo. Con un join normal se
-        # perderían y el total pasaría de 1.957.303,34 a −591.660,57 sin que
-        # nadie lo note (la trampa 2 del proyecto: el join se rompe en silencio).
-        # El catálogo solo se usa para IDENTIFICAR, nunca para filtrar el monto.
+        # OLO SE FILTRA, como en todas las capas del proyecto: no pertenece a
+        # este reporte. presupuesto_gyp_v2 SÍ lo trae, y son 77 cuentas por
+        # +2.548.963,90 en 2026-10 — más que el presupuesto entero de las seis
+        # empresas juntas (90 cuentas, −591.660,57). Sin este filtro el
+        # presupuesto del P&L sale con el signo cambiado.
+        #
+        # El filtro va por empresa y NO por pertenencia al catálogo: así no
+        # depende de que el catálogo esté completo, y una cuenta de Mayoreo que
+        # falte en el catálogo se nota en vez de desaparecer.
+        # El LEFT JOIN solo IDENTIFICA (empresa, concepto); nunca filtra montos.
         for f in consultar("""
-    SELECT p.Combinada AS comb, c.Empresa AS emp,
+    SELECT p.Combinada AS comb, p.Empresa AS emp,
            p.Cuenta AS cuenta, p.Centro_Costo AS centro, {s} AS slot,
            SUM(COALESCE(p.Monto_USD,0)) AS usd
     FROM Gold.dbo.presupuesto_gyp_v2 p
     LEFT JOIN Gold.dbo.catalogo_gyp_general_v2 c ON c.Combinada = p.Combinada
     WHERE p.Fecha >= '{i}' AND p.Fecha < '{f}'
-    GROUP BY p.Combinada, c.Empresa, p.Cuenta, p.Centro_Costo, {s}
+      AND p.Empresa IN ('Beval','Febeca','Sillaca','Cofersa','Mundial','Prisma')
+    GROUP BY p.Combinada, p.Empresa, p.Cuenta, p.Centro_Costo, {s}
     """.format(s=SLOT, i=ini, f=fin)):
             comb = f['comb']
             ppto[comb] = round(ppto.get(comb, 0.0) + num(f['usd']), 2)
-            if f.get('emp'):
+            # El slot viene del catálogo: si es NULL, esa cuenta de Mayoreo NO
+            # está en el catálogo y no se puede clasificar en el P&L. Su monto
+            # sigue contando en `ppto` (para las cuentas que sí tienen
+            # movimiento), pero no se puede crear una fila de detalle para ella.
+            if f.get('slot'):
                 ppto_info[comb] = {
                     'empresa': f['emp'], 'cuenta': f['cuenta'],
                     'centro_costo': f['centro'],
