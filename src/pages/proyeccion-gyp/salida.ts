@@ -367,12 +367,38 @@ export function construirFilasEscenarios(
     diasDelMes,
   });
   const fecha = fechaDia1(periodo);
+
+  // D8 · Sin tasa NO se publica un cero. `monto_local = monto * (tasa || 0)`
+  // convertia una tasa ausente en una columna entera de ceros en Power BI: un
+  // dato que parece bueno y no lo es. Es preferible negarse a publicar.
+  const sinTasa = [...new Set(reglas.map((r) => r.empresa))].filter(
+    (e) => !(typeof params[e]?.tasa === 'number' && params[e].tasa !== 0),
+  );
+  if (sinTasa.length) {
+    throw new Error(
+      `No hay tasa del periodo para ${sinTasa.join(', ')}: Monto_Local saldria en 0 ` +
+        `para esas empresas. Carga la tasa en proyeccion_parametro antes de publicar.`,
+    );
+  }
+
+  // D8 · Lo mismo con el pais: `r.pais || PAIS[...] || r.empresa` acababa
+  // poniendo el NOMBRE DE LA EMPRESA en la columna Pais cuando faltaba el mapa.
+  // El mapa propio (CP-52) cubre las seis empresas; si alguna no esta, es un
+  // error de configuracion y se dice, no se rellena con cualquier cosa.
+  const sinPais = [...new Set(reglas.map((r) => r.empresa))].filter((e) => !PAIS[e]);
+  if (sinPais.length) {
+    throw new Error(
+      `Sin pais en el mapa para ${sinPais.join(', ')}: la columna Pais saldria con ` +
+        `el nombre de la empresa. Revisa PAIS en engine.ts.`,
+    );
+  }
+
   const filaDe = (r: Regla, monto: number, escenario: number): FilaResultado => ({
     periodo,
     fecha,
     vista: 'GYP',
     combinada: r.combinada,
-    pais: r.pais || PAIS[r.empresa] || r.empresa,
+    pais: PAIS[r.empresa],
     empresa: r.empresa,
     // CP-05: solo Cofersa/Mundial, con la tasa del mes. Las reglas leídas de la
     // base llegan sin tasa propia; se completa con la de `proyeccion_parametro`.
@@ -381,7 +407,7 @@ export function construirFilasEscenarios(
       : null,
     ajuste: 0,
     ajuste_usd: 0,
-    monto_local: monto * (params[r.empresa]?.tasa || 0),
+    monto_local: monto * (params[r.empresa] as Parametro).tasa!,
     monto_usd: monto,
     centro_costo: r.cc,
     cuenta_contable: r.cuenta,
