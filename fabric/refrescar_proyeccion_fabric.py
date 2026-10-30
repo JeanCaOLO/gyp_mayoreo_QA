@@ -252,6 +252,18 @@ def corte_publicado(periodo_):
         return None
 
 
+class ErrorEscritura(Exception):
+    """Fallo escribiendo en Supabase durante la extraccion de UN periodo.
+
+    D5: antes estas tres rutas lanzaban SystemExit, que hereda de BaseException
+    y por tanto NO lo atrapa el `except Exception` del bucle por periodo. El
+    script moria a medias: el segundo mes no se procesaba y el detalle por
+    cuenta, ya borrado, quedaba vacio hasta la siguiente corrida. Siendo una
+    Exception normal, el periodo se marca en error y la corrida sigue con el
+    siguiente mes.
+    """
+
+
 def _post(tabla, filas, on_conflict, ignore_duplicates=False):
     """UPSERT (o INSERT-if-absent) por lotes contra PostgREST.
 
@@ -276,7 +288,7 @@ def _post(tabla, filas, on_conflict, ignore_duplicates=False):
         try:
             urllib.request.urlopen(req, timeout=60).read()
         except urllib.error.HTTPError as e:
-            raise SystemExit('Error escribiendo %s: HTTP %s %s'
+            raise ErrorEscritura('Error escribiendo %s: HTTP %s %s'
                              % (tabla, e.code, e.read().decode('utf-8', 'replace')))
 
 
@@ -295,7 +307,7 @@ def _patch(tabla, periodo_, empresa_, cambios):
     try:
         urllib.request.urlopen(req, timeout=60).read()
     except urllib.error.HTTPError as e:
-        raise SystemExit('Error actualizando %s: HTTP %s %s'
+        raise ErrorEscritura('Error actualizando %s: HTTP %s %s'
                          % (tabla, e.code, e.read().decode('utf-8', 'replace')))
 
 
@@ -313,7 +325,7 @@ def _delete(tabla, filtro):
     try:
         urllib.request.urlopen(req, timeout=60).read()
     except urllib.error.HTTPError as e:
-        raise SystemExit('Error borrando %s: HTTP %s %s'
+        raise ErrorEscritura('Error borrando %s: HTTP %s %s'
                          % (tabla, e.code, e.read().decode('utf-8', 'replace')))
 
 
@@ -694,7 +706,17 @@ def extraer_periodo(periodo_):
     # --- 8. CP-15 · Alertas: cuentas con movimiento en el mayor que el catálogo
     #     GyP no reconoce. Se cruza por Combinada el mayor (Vista GYP, sin 9.5.*)
     #     contra catalogo_gyp_general_v2. No se listan cuentas de balance.
-    alertas = _calcular_alertas(periodo_, ini, fin, serie_ini)
+    try:
+        alertas = _calcular_alertas(periodo_, ini, fin, serie_ini)
+        alertas_ok = True
+    except ErrorAlertas as e:
+        # D4: se conserva lo ya publicado y se avisa fuerte. El resto de la
+        # extraccion (historia, detalle, parametros) sigue: no tiene sentido
+        # perder el mes entero porque fallaran las alertas.
+        print('  *** %s' % e)
+        print('      Se CONSERVAN las alertas anteriores del periodo.')
+        alertas = []
+        alertas_ok = False
     print('  alertas         : %d cuentas por revisar (proyeccion_alerta)' % len(alertas))
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -763,11 +785,19 @@ def extraer_periodo(periodo_):
         print('  escritas %d filas en dim_cuenta' % len(dim))
 
     # 3) Alertas del catálogo (CP-15). Reemplazo del periodo.
-    _delete('proyeccion_alerta', 'periodo=eq.%s' % periodo_)
-    if alertas:
-        _post('proyeccion_alerta', alertas, 'periodo,combinada')
-        filas_escritas += len(alertas)
-        print('  escritas %d filas en proyeccion_alerta' % len(alertas))
+    #    D4: el borrado va CONDICIONADO a que el calculo haya salido bien. Antes
+    #    se borraba siempre, asi que un fallo dejaba el periodo sin alertas y la
+    #    pantalla decia "cero pendientes".
+    if alertas_ok:
+        _delete('proyeccion_alerta', 'periodo=eq.%s' % periodo_)
+        if alertas:
+            _post('proyeccion_alerta', alertas, 'periodo,combinada')
+            filas_escritas += len(alertas)
+            print('  escritas %d filas en proyeccion_alerta' % len(alertas))
+        else:
+            print('  sin alertas que publicar en este periodo')
+    else:
+        print('  proyeccion_alerta: NO se toca (el calculo de alertas fallo)')
 
     # 4) Parámetros por empresa, en dos pasos para NO pisar el factor_correccion
     #    que fija control (documento 07 §5).
@@ -857,8 +887,16 @@ def _calcular_alertas(periodo_, ini, fin, serie_ini):
                 'ultimo_mes': filas.get('ult_mes'),
             })
     except Exception as e:
-        print('  (no se pudieron calcular las alertas: %s)' % e)
+        # D4: NO se traga el error. Antes devolvia la lista a medias (o vacia) y
+        # el llamador borraba las alertas viejas igualmente: la pestana Alertas
+        # mostraba cero pendientes COMO SI TODO ESTUVIERA BIEN. Un cero que
+        # significa "fallo el calculo" es peor que no mostrar nada.
+        raise ErrorAlertas('no se pudieron calcular las alertas: %s' % e)
     return alertas
+
+
+class ErrorAlertas(Exception):
+    """D4: el calculo de alertas fallo. No se tocan las alertas ya publicadas."""
 
 
 class GuardaNoSuperada(Exception):

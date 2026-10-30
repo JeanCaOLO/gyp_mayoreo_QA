@@ -85,6 +85,32 @@ export interface ReglaBase {
  */
 const TAM_PAGINA = 1000;
 
+/**
+ * Lee una tabla entera, por páginas de `TAM_PAGINA` (D2).
+ *
+ * Supabase devuelve como mucho 1.000 filas y **no avisa de que cortó**: no hay
+ * error, solo faltan filas. En este proyecto eso no se nota como un fallo, se
+ * nota como cifras que no cuadran, y distintas en cada carga según el orden que
+ * devuelva la base. Toda tabla que pueda pasar de 1.000 filas se lee por aquí.
+ *
+ * Devuelve `null` si alguna página falló, para que el llamador distinga «no hay
+ * datos» de «no se pudieron leer» — y no trate una lectura rota como una tabla
+ * vacía, que es justo el error que esta función existe para evitar.
+ */
+async function leerPaginado<T>(
+  pagina: (desde: number, hasta: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+): Promise<T[] | null> {
+  const filas: T[] = [];
+  for (let desde = 0; ; desde += TAM_PAGINA) {
+    const { data, error } = await pagina(desde, desde + TAM_PAGINA - 1);
+    if (error) return null;
+    if (!data || data.length === 0) break;
+    filas.push(...data);
+    if (data.length < TAM_PAGINA) break;
+  }
+  return filas;
+}
+
 /** Estado inicial 100% desde la semilla (sin red). Reproduce la aceptación. */
 export function construirDesdeSemilla(): ProyeccionData {
   const params: Record<string, Parametro> = {};
@@ -467,11 +493,16 @@ function numeroODefault(x: number | string | null | undefined): number {
  * (entonces las bases por capas se limitan a empresa/grupo/concepto, Req 5.3).
  */
 export async function cargarDetalleCuenta(periodo: string): Promise<FilaHistoricoCuenta[]> {
-  const { data, error } = await supabase
-    .from('gyp_historico_cuenta')
-    .select('periodo,empresa,combinada,cuenta,centro_costo,concepto,acumulado,presupuesto,meses')
-    .eq('periodo', periodo);
-  if (error || !data) return [];
+  // D2: paginado. Es la tabla mas grande del aplicativo (~4.700 filas por mes):
+  // sin paginar se perdia mas de la mitad del detalle, en silencio.
+  const data = await leerPaginado<FilaHistoricoCuenta>((desde, hasta) =>
+    supabase
+      .from('gyp_historico_cuenta')
+      .select('periodo,empresa,combinada,cuenta,centro_costo,concepto,acumulado,presupuesto,meses')
+      .eq('periodo', periodo)
+      .range(desde, hasta),
+  );
+  if (!data) return [];
   return (data as FilaHistoricoCuenta[]).map((r) => ({
     periodo: r.periodo,
     empresa: r.empresa,
@@ -491,11 +522,16 @@ export async function cargarDetalleCuenta(periodo: string): Promise<FilaHistoric
  * si la base no responde.
  */
 export async function cargarCatalogo(): Promise<FilaDimCuenta[]> {
-  const { data, error } = await supabase
-    .from('dim_cuenta')
-    .select('combinada,empresa,pais,cuenta,centro_costo,descripcion,seccion,linea,detalle,concepto');
-  if (error || !data) return [];
-  return data as FilaDimCuenta[];
+  // D2: paginado. El catalogo cubre las seis empresas y pasa de 1.000 filas;
+  // truncado, las cuentas que faltan quedan sin capas ni descripcion.
+  const data = await leerPaginado<FilaDimCuenta>((desde, hasta) =>
+    supabase
+      .from('dim_cuenta')
+      .select('combinada,empresa,pais,cuenta,centro_costo,descripcion,seccion,linea,detalle,concepto')
+      .range(desde, hasta),
+  );
+  if (!data) return [];
+  return data;
 }
 
 /**
@@ -503,16 +539,20 @@ export async function cargarCatalogo(): Promise<FilaDimCuenta[]> {
  * Devuelve `[]` si la base no responde.
  */
 export async function cargarAlertas(periodo: string): Promise<Alerta[]> {
-  const { data, error } = await supabase
-    .from('proyeccion_alerta')
-    .select('periodo,combinada,accion,sugerencia,movimiento_mes,movimiento_12m,ultimo_mes')
-    .eq('periodo', periodo);
-  if (error || !data) return [];
   interface RowAlerta {
     periodo: string; combinada: string; accion: string; sugerencia: string | null;
     movimiento_mes: number | null; movimiento_12m: number | null; ultimo_mes: number | null;
   }
-  return (data as RowAlerta[]).map((r) => ({
+  // D2: paginado, por si un periodo trae muchas cuentas por revisar.
+  const data = await leerPaginado<RowAlerta>((desde, hasta) =>
+    supabase
+      .from('proyeccion_alerta')
+      .select('periodo,combinada,accion,sugerencia,movimiento_mes,movimiento_12m,ultimo_mes')
+      .eq('periodo', periodo)
+      .range(desde, hasta),
+  );
+  if (!data) return [];
+  return data.map((r) => ({
     periodo: r.periodo,
     combinada: r.combinada,
     accion: r.accion,

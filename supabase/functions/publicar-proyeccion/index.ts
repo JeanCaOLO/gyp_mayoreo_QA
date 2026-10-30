@@ -235,11 +235,23 @@ serve(async (req: Request) => {
     if (Array.isArray(body.dimCuenta)) {
       catalogo = new Set<string>(body.dimCuenta.map(String));
     } else {
-      const { data, error } = await supabase
-        .from("dim_cuenta")
-        .select("combinada");
-      if (error) throw error;
-      catalogo = new Set<string>((data ?? []).map((r: { combinada: string }) => r.combinada));
+      // D2: PAGINADO, y aqui es lo que mas duele. Supabase corta en 1.000
+      // filas sin avisar; el catalogo de las seis empresas pasa de ahi. Con el
+      // catalogo truncado, Combinadas perfectamente validas se marcan como
+      // HUERFANAS — y la regla de esta funcion es que si hay huerfanas no se
+      // publica NINGUN escenario. Es decir: una lectura cortada en silencio
+      // bloqueaba la publicacion entera y el mensaje culpaba al catalogo.
+      catalogo = new Set<string>();
+      for (let desde = 0; ; desde += 1000) {
+        const { data, error } = await supabase
+          .from("dim_cuenta")
+          .select("combinada")
+          .range(desde, desde + 999);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        for (const r of data as Array<{ combinada: string }>) catalogo.add(r.combinada);
+        if (data.length < 1000) break;
+      }
     }
 
     // Preparar los dos escenarios ANTES de escribir nada: filtrar (CP-49),

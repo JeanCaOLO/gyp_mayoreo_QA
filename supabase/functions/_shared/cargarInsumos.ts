@@ -117,11 +117,22 @@ export async function cargarInsumos(
   }
 
   // ── Historia mensual → serie + acumulado por cuenta (igual que data.ts) ──
-  const { data: hr } = await db
-    .from('gyp_historico_mensual')
-    .select('periodo,empresa,concepto,monto_usd,es_venta');
+  //
+  // D2: PAGINADO. Supabase corta en 1.000 filas y no avisa; esta tabla ya va por
+  // ~1.300 y crece cada mes. Truncada, la corrida programada publicaria series
+  // incompletas sin dar ningun error: cifras mal en Power BI y nadie sabria por que.
+  const historico: RowHistorico[] = [];
+  for (let desde = 0; ; desde += 1000) {
+    const { data: pagina, error: eHist } = await db
+      .from('gyp_historico_mensual')
+      .select('periodo,empresa,concepto,monto_usd,es_venta')
+      .range(desde, desde + 999);
+    if (eHist) throw new Error('No se pudo leer la historia mensual: ' + eHist.message);
+    if (!pagina || pagina.length === 0) break;
+    historico.push(...(pagina as RowHistorico[]));
+    if (pagina.length < 1000) break;
+  }
   const series: Record<string, SerieCuenta> = {};
-  const historico = (hr ?? []) as RowHistorico[];
   if (historico.length) {
     const periodosOrden = [...new Set(historico.map((h) => h.periodo))].sort();
     const prevPeriodos = periodosOrden.filter((p) => p < periodo);
