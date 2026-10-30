@@ -868,6 +868,11 @@ export default function ProyeccionGypPage() {
           nombre: n === 1 ? 'Proyectado' : 'Causado',
           filas: fusionarPorCombinada(todas.filter((f) => f.proyeccion === n)),
           desgloses: desglosesAhora,
+          // PENDIENTE: siempre vacio, asi que la comprobacion 8 del checklist
+          // (CP-21: reglas + resto = concepto) no se evalua NUNCA y pasa
+          // siempre. No es que cuadre: es que no se mira. Alimentarla con
+          // `insumosDelResto` la convertiria en una validacion bloqueante
+          // nueva, que es un cambio de comportamiento a decidir aparte.
           cuadres: [],
         })),
         {

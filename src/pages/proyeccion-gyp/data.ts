@@ -352,6 +352,9 @@ export async function cargarDesdeSupabase(
 
 // FilaResultado vive en salida.ts (módulo puro). Se re-exporta aquí para
 // no romper a sus consumidores históricos (import { FilaResultado } from './data').
+// `export type ... from` reexporta el tipo pero NO lo trae al ambito de este
+// modulo; los usos de abajo quedaban sin resolver. Hace falta el import.
+import type { FilaResultado } from './salida';
 export type { FilaResultado } from './salida';
 
 /** Reemplaza las filas del periodo y escribe el nuevo resultado. */
