@@ -111,6 +111,27 @@ const OP_PIDE_N = ['promedio', 'mediana', 'ratio_venta'];
 /** Operaciones que ya aparecen como tarjeta de historia con su error WAPE. */
 const OPS_CON_TARJETA = ['promedio', 'mediana', 'ultimo', 'ratio_venta'];
 
+/**
+ * C5 · Modo de causado que le corresponde a cada método de fábrica.
+ *
+ * Copiado de la tabla `OPCIONES` del prototipo (campo `causa`), que es la
+ * referencia de aceptación. `undefined` = el prototipo pone `causa: null`, es
+ * decir NO fijar causado: «Como va el mes» (fórmula de venta) y «Del Cargo Fijo
+ * del grupo» (derivada) ya son su propio causado (§E / Requirement 13.3).
+ */
+export const CAUSADO_DE_METODO: Record<string, Causado | undefined> = {
+  m_mediana: 'calendario', // Lo típico
+  m_promedio: 'calendario', // El promedio
+  m_ultimo: 'calendario', // Igual que el mes pasado
+  m_ppto: 'calendario', // Lo presupuestado
+  m_fijo: 'calendario', // Un monto fijo
+  m_ratio_venta: 'igual', // Según la venta
+  m_pct_venta: 'igual', // Un % de la venta
+  m_pct_semineto: 'igual', // Un % del Semi Neto
+  m_venta: undefined, // Como va el mes          → causa: null
+  m_derivada: undefined, // Del Cargo Fijo del grupo → causa: null
+};
+
 export default function PanelRegla({
   regla,
   valProyeccion,
@@ -143,6 +164,29 @@ export default function PanelRegla({
   const [creando, setCreando] = useState(false);
 
   const set = <K extends keyof Borrador>(k: K, v: Borrador[K]) => setB((p) => ({ ...p, [k]: v }));
+
+  /**
+   * C5 · Elegir una opción fija también su modo de causado.
+   *
+   * Antes solo cambiaba el método: el causado se quedaba en 'igual' y el
+   * escenario Causado salía inflado (el mes entero en vez de lo que va del
+   * mes). El mapeo es el de la tabla `OPCIONES` del prototipo, que es la
+   * referencia de aceptación — no una interpretación:
+   *
+   *   Lo típico · El promedio · Igual que el mes pasado · Lo presupuestado ·
+   *   Un monto fijo · Armar mi fórmula        → 'calendario'
+   *   Según la venta · Un % de la venta · % del Semi Neto → 'igual'
+   *   Como va el mes · Del Cargo Fijo del grupo → NO se toca (`causa: null` en
+   *       el prototipo): la fórmula de venta y la derivada ya son su propio
+   *       causado (§E / Requirement 13.3).
+   *
+   * Un método propio del usuario no está en el mapa y conserva su causado: no
+   * hay forma de adivinar qué quiso, y cambiárselo en silencio sería peor.
+   */
+  const elegirMetodo = (id: string, extras?: Partial<Borrador>) => {
+    const causado = CAUSADO_DE_METODO[id];
+    setB((p) => ({ ...p, metodo: id, valor: null, ...(causado ? { causado } : {}), ...extras }));
+  };
 
   const metodosList = Object.values(metodos);
   const m = metodos[b.metodo];
@@ -267,9 +311,7 @@ export default function PanelRegla({
                   disponible={!!mo}
                   onElegir={() => {
                     if (!mo) return;
-                    set('metodo', mo.id);
-                    set('valor', null);
-                    if (op.n) set('n', op.n);
+                    elegirMetodo(mo.id, op.n ? { n: op.n } : undefined);
                   }}
                 />
               );
@@ -286,10 +328,7 @@ export default function PanelRegla({
               <button
                 key={mm.id}
                 type="button"
-                onClick={() => {
-                  set('metodo', mm.id);
-                  set('valor', null);
-                }}
+                onClick={() => elegirMetodo(mm.id)}
                 title={formula(mm)}
                 className={`rounded-lg border px-2.5 py-1.5 text-left text-xs transition-colors ${
                   sel
@@ -323,8 +362,8 @@ export default function PanelRegla({
             onCancelar={() => setCreando(false)}
             onCrear={(nuevo) => {
               onCrearMetodo(nuevo);
-              set('metodo', nuevo.id);
-              set('valor', null);
+              // "Armar mi formula" causa por calendario en el prototipo.
+              elegirMetodo(nuevo.id, { causado: 'calendario' });
               setCreando(false);
             }}
           />
@@ -354,10 +393,7 @@ export default function PanelRegla({
           Método
           <select
             value={b.metodo}
-            onChange={(e) => {
-              set('metodo', e.target.value);
-              set('valor', null);
-            }}
+            onChange={(e) => elegirMetodo(e.target.value)}
             className="rounded border border-slate-200 px-2 py-1.5 text-sm"
           >
             {metodosList.map((mm) => (

@@ -14,6 +14,7 @@ import { calcularEscenarios } from './engine';
 import type { Regla, Metodo, Parametro } from './engine';
 import { REGLAS_SEED, METODOS_BASE, PARAMS_SEED, EMPRESAS } from './seed';
 import { SERIE_ORACULO_7OCT } from './series';
+import { CAUSADO_DE_METODO } from './components/PanelRegla';
 
 /** Mismo ensamblado que `ensamblarReglas` de data.ts (ver engine.test.ts). */
 function armarReglas(): Regla[] {
@@ -78,5 +79,35 @@ describe('Por qué el oráculo de 190 no atrapaba C3 ni C4', () => {
     }, {});
     expect(porModo['real'] ?? 0).toBe(0);
     expect(porModo['calendario'] ?? 0).toBe(0);
+  });
+});
+
+/**
+ * C5 · Elegir una opción debe fijar su modo de causado.
+ *
+ * El mapeo sale de la tabla `OPCIONES` del prototipo (campo `causa`). Esta
+ * compuerta existe para que no se desvíe en silencio: si alguien cambia un
+ * modo, el test lo dice y obliga a mirar el prototipo antes.
+ */
+describe('§E · Causado por defecto de cada opción (C5)', () => {
+  it('las cinco opciones sobre historia o monto causan por calendario', () => {
+    for (const id of ['m_mediana', 'm_promedio', 'm_ultimo', 'm_ppto', 'm_fijo']) {
+      expect(CAUSADO_DE_METODO[id], id).toBe('calendario');
+    }
+  });
+
+  it('las opciones sobre la venta o el Semi Neto causan igual', () => {
+    for (const id of ['m_ratio_venta', 'm_pct_venta', 'm_pct_semineto']) {
+      expect(CAUSADO_DE_METODO[id], id).toBe('igual');
+    }
+  });
+
+  it('la fórmula de venta y la derivada NO fijan causado: ya son el suyo', () => {
+    expect(CAUSADO_DE_METODO['m_venta']).toBeUndefined();
+    expect(CAUSADO_DE_METODO['m_derivada']).toBeUndefined();
+  });
+
+  it('un método propio no está en el mapa y conserva su causado', () => {
+    expect(CAUSADO_DE_METODO['m_inventado_por_el_usuario']).toBeUndefined();
   });
 });
