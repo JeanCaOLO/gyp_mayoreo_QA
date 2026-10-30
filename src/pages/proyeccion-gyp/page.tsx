@@ -400,6 +400,32 @@ export default function ProyeccionGypPage() {
   // ── Carga desde Supabase. Si es manual, primero dispara la extracción de
   //    Fabric (Edge Function refrescar-proyeccion-fabric) y luego recarga lo que
   //    quedó en Supabase. ──
+/**
+   * Recarga el NUCLEO de datos de un periodo: acumulado, serie, corte y
+   * parametros (tasa, dias habiles, factor).
+   *
+   * Existe aparte de `traer` porque `traer` saca el mes de
+   * `proyeccion_config`, y al elegir un mes hay que cargar EL QUE SE ELIGIO,
+   * sin esperar a que se guarde en la base ni arriesgarse a leer el anterior.
+   */
+  const recargarPeriodo = useCallback(
+    async (periodo: string) => {
+      const seed = construirDesdeSemilla();
+      seed.periodo = periodo;
+      try {
+        const nuevo = await cargarDesdeSupabase(periodo, seed);
+        setData(nuevo);
+        setParams(nuevo.params);
+        return nuevo;
+      } catch {
+        setData((d) => ({ ...d, periodo }));
+        addToast('error', `No hay extraccion de ${periodo} en la base.`);
+        return null;
+      }
+    },
+    [addToast],
+  );
+
   const traer = useCallback(
     async (manual: boolean) => {
       const seed = construirDesdeSemilla();
@@ -787,7 +813,14 @@ export default function ProyeccionGypPage() {
       setPresupuesto([]);
       setOverrides({});
       setNuevas([]);
+      // Cambiar de mes NO era solo cambiar la etiqueta: el acumulado, la serie,
+      // el corte y los parametros son POR PERIODO. Antes solo se hacia
+      // `setData({...d, periodo})`, asi que la pantalla decia «mes de trabajo
+      // 2026-09» mientras seguia proyectando con el acumulado de octubre: el
+      // proyectado no se movia ni un dolar y el causado cambiaba un poco, solo
+      // porque el prorrateo mira los dias del mes nuevo. Nada fallaba.
       setData((d) => ({ ...d, periodo: nuevoPeriodo }));
+      recargarPeriodo(nuevoPeriodo);
 
       // P1 · Se GUARDA de verdad. Antes esto solo hacía `setData`: el aviso
       // decía «para todos» y al recargar volvía atrás. Si la tabla de
@@ -830,7 +863,7 @@ export default function ProyeccionGypPage() {
         }
       });
     },
-    [data.periodo, addToast, revMes, mesesPreparados],
+    [data.periodo, addToast, revMes, mesesPreparados, recargarPeriodo],
   );
 
   // El factor se guarda POR MES (CP-33 / CP-37). Actualiza el estado local y lo
