@@ -140,12 +140,27 @@ SUMA_USD_VALIDADO = "SUM(g.Monto_USD + COALESCE(g.Ajuste_USD,0))"
 # Lectura de parámetros (sin exponer secretos)
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Key Vault del que salen los secretos. Se puede cambiar por entorno para tener
+# un vault por proyecto (productivo y QA) sin tocar el script.
+VAULT = (os.environ.get('SUPABASE_VAULT') or 'proyeccion-gyp').strip()
+
+# Si está a '1', los secretos salen SOLO del entorno y NO se consulta el vault.
+# Sirve para correr contra QA desde un workspace cuyo vault apunta a productivo:
+# sin esto, el vault gana y el script escribiría en el proyecto equivocado.
+SOLO_ENTORNO = (os.environ.get('SUPABASE_SOLO_ENTORNO') or '').strip() == '1'
+
+
 def _secreto(nombre):
-    """Lee un secreto de Fabric si hay almacén configurado; si no, del entorno."""
+    """Lee un secreto del entorno o del Key Vault de Fabric.
+
+    Orden: si SUPABASE_SOLO_ENTORNO=1, solo el entorno. Si no, primero el vault
+    (el comportamiento de siempre) y el entorno como respaldo.
+    """
+    if SOLO_ENTORNO:
+        return os.environ.get(nombre)
     try:
         import notebookutils  # type: ignore
-        # Ajusta 'proyeccion-gyp' al nombre de tu Key Vault vinculado en Fabric.
-        return notebookutils.credentials.getSecret('proyeccion-gyp', nombre)
+        return notebookutils.credentials.getSecret(VAULT, nombre)
     except Exception:
         return os.environ.get(nombre)
 
@@ -192,6 +207,19 @@ if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
         "Faltan SUPABASE_URL o SUPABASE_SERVICE_KEY. Configúralos en el Key Vault "
         "vinculado al workspace de Fabric, o como variables de entorno del notebook."
     )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Aviso del destino. Escribir en el proyecto equivocado es el error caro de este
+# script, y es silencioso: las tablas se llaman igual en QA y en productivo. Por
+# eso el host va impreso ANTES de cualquier escritura. Nunca se imprime la clave.
+# ─────────────────────────────────────────────────────────────────────────────
+_host = SUPABASE_URL.replace('https://', '').split('.')[0]
+print('=' * 70)
+print('  ESCRIBIENDO EN EL PROYECTO SUPABASE: %s' % _host)
+print('  secretos desde: %s' % ('ENTORNO (vault omitido)' if SOLO_ENTORNO
+                                else "vault '%s' con respaldo de entorno" % VAULT))
+print('  Si este no es el proyecto que esperabas, DETEN el notebook ahora.')
+print('=' * 70)
 
 hoy = datetime.date.today()
 
