@@ -1128,8 +1128,12 @@ export default function ProyeccionGypPage() {
       )}
 
       {tab === 'alertas' && (
+        /* P13 · El contador cuenta ALERTAS del catalogo, no avisos de reglas.
+           El `|| avisos.length` hacia que, sin alertas, la pestana mostrara un
+           numero que no tenia nada que ver: eran Combinadas duplicadas entre
+           reglas, otra cosa distinta. */
         <PestanaAlertas
-          contador={alertas.length || avisos.length}
+          contador={alertas.length}
           alertas={alertas}
           periodo={data.periodo}
         />

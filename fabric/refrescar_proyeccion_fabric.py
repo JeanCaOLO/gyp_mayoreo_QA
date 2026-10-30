@@ -878,12 +878,17 @@ def _calcular_alertas(periodo_, ini, fin, serie_ini):
     LEFT JOIN Gold.dbo.catalogo_gyp_general_v2 c ON c.Combinada = g.Combinada
     WHERE g.FECHA >= '{a}' AND g.FECHA < '{f}'
       AND {gyp} AND {no95}
-      AND g.CUENTA_CONTABLE NOT LIKE '1.%'   -- activo   (balance, no GyP)
-      AND g.CUENTA_CONTABLE NOT LIKE '2.%'   -- pasivo
-      AND g.CUENTA_CONTABLE NOT LIKE '3.%'   -- patrimonio
-      AND g.CUENTA_CONTABLE NOT LIKE '1-%'
-      AND g.CUENTA_CONTABLE NOT LIKE '2-%'
-      AND g.CUENTA_CONTABLE NOT LIKE '3-%'
+      -- D6 · Las cuentas de balance se descartan segun los primeros digitos que
+      -- usa el CATALOGO DE CADA EMPRESA, no con una lista fija 1/2/3.
+      -- Las empresas no numeran igual: Mundial usa sobre todo el 5, mientras
+      -- Febeca, Prisma y Sillaca usan el 7. Con la lista fija entraban 194
+      -- cuentas de balance a la pestana Alertas en 2026-10, pidiendo
+      -- clasificar cosas que no van en el P&L.
+      AND EXISTS (
+        SELECT 1 FROM Gold.dbo.catalogo_gyp_general_v2 k
+         WHERE k.Empresa = g.Empresa
+           AND LEFT(k.Cuenta, 1) = LEFT(g.CUENTA_CONTABLE, 1)
+      )
     GROUP BY g.Combinada
     """.format(i=ini, f=fin, a=serie_ini, s=SLOT, gyp=COND_GYP, no95=COND_NO_95)):
             comb = filas['comb']

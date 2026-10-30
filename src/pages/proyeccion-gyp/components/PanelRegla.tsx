@@ -290,6 +290,25 @@ export default function PanelRegla({
     });
     return out;
   }, [rec.errores, metodosList, simular, cambios, serieConcepto, b.n]);
+  /**
+   * P3 · Cuanto daria cada una de las OTRAS opciones.
+   *
+   * "Lo presupuestado", "Como va el mes", "Un monto fijo", "Un % de la venta",
+   * "% del Semi Neto" y "Del Cargo Fijo" quedaban en una lista de botones sin
+   * mostrar su numero, asi que elegir entre ellas era a ciegas: habia que
+   * seleccionar una, mirar el resultado y volver atras si no servia.
+   *
+   * Se simula con el motor completo, igual que las tarjetas de historia.
+   */
+  const numeroOtraForma = useMemo(() => {
+    const out: Record<string, number | null> = {};
+    otrasFormas.forEach((mm) => {
+      const s = simular?.({ ...cambios, metodo: mm.id, valor: null, n: cambios.n });
+      out[mm.id] = s ? s.proy : null;
+    });
+    return out;
+  }, [otrasFormas, simular, cambios]);
+
   const hayCambio =
     !!sim &&
     [sim.proy - valProyeccion, sim.caus - valCausado, sim.snProy - semiNetoProy, sim.snCaus - semiNetoCaus].some(
@@ -390,6 +409,16 @@ export default function PanelRegla({
                 {!mm.fijo && (
                   <span className={`ml-1 text-[10px] ${sel ? 'text-emerald-100' : 'text-emerald-700'}`}>
                     propia
+                  </span>
+                )}
+                {/* P3 · El numero que daria, para no elegir a ciegas. */}
+                {numeroOtraForma[mm.id] != null && (
+                  <span
+                    className={`block font-mono text-[11px] tabular-nums ${
+                      sel ? 'text-emerald-50' : 'text-slate-500'
+                    }`}
+                  >
+                    {fmt(numeroOtraForma[mm.id] as number)}
                   </span>
                 )}
               </button>
