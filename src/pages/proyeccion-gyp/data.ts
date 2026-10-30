@@ -180,6 +180,8 @@ interface RowRegla {
   centro_costo: string; cuenta_contable: string; metodo: string; valor: number | null; activa: boolean;
   id?: number; rev?: number; n?: number | null; nombre?: string | null; detalle?: string | null;
   causado?: Causado; escenarios?: EscenarioRegla; nivel?: NivelRegla; eliminada?: boolean;
+  /** C9 · Fórmula propia asignada a la regla (`proyeccion_formula.id`). */
+  formula_id?: number | null;
 }
 interface RowHistorico {
   periodo: string; empresa: string; concepto: string; monto_usd: number; es_venta: boolean;
@@ -273,6 +275,9 @@ export async function cargarDesdeSupabase(
       escenarios: row.escenarios,
       nivel: row.nivel,
       eliminada: row.eliminada ?? false,
+      // C9 · Si la regla tiene fórmula asignada, su método ES esa fórmula.
+      // Antes `formula_id` se guardaba y no lo leía nadie.
+      ...(row.formula_id != null && { metodo: idMetodoDeFormula(row.formula_id) }),
     }));
     encontroAlgo = true;
   }
@@ -1288,6 +1293,60 @@ export async function cargarFormulas(): Promise<FormulaGuardada[]> {
       causado: r.causado ?? 'igual',
       rev: r.rev ?? 0,
     }));
+}
+
+/**
+ * C9 · Identificador de método de una fórmula propia.
+ *
+ * `proyeccion_regla.metodo` es texto, así que una fórmula se referencia con
+ * `f<id>`. Es lo que permite que una regla apunte a una fórmula sin cambiar el
+ * esquema.
+ */
+export function idMetodoDeFormula(idFormula: number): string {
+  return 'f' + idFormula;
+}
+
+/**
+ * C9 · Las fórmulas propias, como métodos que `calcular()` puede evaluar.
+ *
+ * Esta es la pieza que faltaba. Las fórmulas se creaban, se editaban y se
+ * guardaban, pero NADIE leía `proyeccion_regla.formula_id`: no existía ninguna
+ * conversión de fila de `proyeccion_formula` a método, así que nunca llegaban
+ * al motor y una fórmula daba 0 o no se podía asignar.
+ *
+ * El turno es el 4 (§C): una fórmula puede referirse a otras reglas, así que
+ * se calcula después de la venta y de los métodos de historia.
+ *
+ * Degrada en silencio: si la tabla no responde, devuelve {} y la pantalla sigue
+ * con los métodos de fábrica.
+ */
+export async function cargarFormulasComoMetodos(): Promise<Record<string, Metodo>> {
+  let formulas: FormulaGuardada[];
+  try {
+    formulas = await cargarFormulas();
+  } catch {
+    return {};
+  }
+  const out: Record<string, Metodo> = {};
+  for (const f of formulas) {
+    if (!Array.isArray(f.pasos) || f.pasos.length === 0) continue;
+    const id = idMetodoDeFormula(f.id);
+    out[id] = {
+      id,
+      nombre: f.nombre,
+      // `op`, `base` y `valor` no se usan cuando hay `pasos`; se rellenan con
+      // valores inertes para cumplir el tipo.
+      op: 'sumar',
+      base: 'ninguna',
+      valor: null,
+      invertir: false,
+      orden: 4,
+      fijo: false,
+      pasos: f.pasos,
+      combinar: 'suma',
+    };
+  }
+  return out;
 }
 
 /**

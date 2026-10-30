@@ -88,6 +88,18 @@ export interface Metodo {
   orden: number;
   /** true = método de fábrica (no se puede perder sin reasignar). */
   fijo: boolean;
+  /**
+   * C9 · Pasos de una FORMULA PROPIA (`proyeccion_formula`).
+   *
+   * Un método de fábrica tiene una sola operación y estos campos van vacíos.
+   * Una fórmula armada por el usuario tiene varias piezas, y aquí viajan para
+   * que `calcular()` pueda evaluarla: antes las fórmulas se guardaban, se
+   * editaban y NUNCA llegaban al motor, porque `proyeccion_regla.formula_id`
+   * no lo leía nadie.
+   */
+  pasos?: Paso[];
+  /** Cómo se combinan esos pasos. Una fórmula propia SUMA sus piezas. */
+  combinar?: 'cadena' | 'suma';
 }
 
 export interface Parametro {
@@ -469,6 +481,20 @@ export function baseV1aV2(b: Base): BaseCapas {
  * el escenario proyectado). Esto es el puente que mantiene la aritmética idéntica.
  */
 export function metodoV1aV2(m: Metodo): MetodoV2 {
+  // C9 · Si el método trae sus propios pasos es una fórmula: se usa tal cual,
+  // con su modo de combinación. Un método de fábrica no los trae y sigue
+  // expresándose como un único paso, exactamente como antes.
+  if (m.pasos && m.pasos.length) {
+    return {
+      id: m.id,
+      nombre: m.nombre,
+      orden: m.orden,
+      causadoDefault: 'calendario',
+      deFabrica: false,
+      pasos: m.pasos,
+      combinar: m.combinar ?? 'suma',
+    };
+  }
   return {
     id: m.id,
     nombre: m.nombre,

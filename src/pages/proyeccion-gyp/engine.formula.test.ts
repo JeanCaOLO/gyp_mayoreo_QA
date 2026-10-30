@@ -65,3 +65,44 @@ describe('C9 · modo de combinación de los pasos', () => {
     expect(evaluarMetodoV2({ ...base, combinar: 'suma' }, ctx)).toBeCloseTo(42, 2);
   });
 });
+
+/**
+ * C9 · Una regla con fórmula asignada calcula de verdad.
+ *
+ * Esta es la pieza que faltaba: `proyeccion_regla.formula_id` se guardaba y
+ * nadie lo leía, así que la fórmula nunca llegaba a `calcular()`. El sintoma
+ * era «da 0 y no se puede asignar a ninguna regla».
+ */
+describe('C9 · una fórmula asignada a una regla llega al motor', () => {
+  const formula: Metodo = {
+    id: 'f7', nombre: 'Mi fórmula', op: 'sumar', base: 'ninguna', valor: null,
+    invertir: false, orden: 4, fijo: false,
+    pasos: [paso(1000), { ...paso(250), invertir: true }],
+    combinar: 'suma',
+  };
+
+  it('`metodoV1aV2` conserva los pasos y el modo de la fórmula', async () => {
+    const { metodoV1aV2 } = await import('./engine');
+    const v2 = metodoV1aV2(formula);
+    expect(v2.pasos).toHaveLength(2);
+    expect(v2.combinar).toBe('suma');
+    expect(v2.deFabrica).toBe(false);
+  });
+
+  it('la fórmula se evalúa: 1000 − 250 = 750, no 0', async () => {
+    const { metodoV1aV2 } = await import('./engine');
+    expect(evaluarMetodoV2(metodoV1aV2(formula), ctx)).toBeCloseTo(750, 2);
+  });
+
+  it('un método de fábrica NO cambia: sigue siendo de un solo paso', async () => {
+    const { metodoV1aV2 } = await import('./engine');
+    const fabrica: Metodo = {
+      id: 'm_fijo', nombre: 'Monto fijo', op: 'valor_fijo', base: 'ninguna',
+      valor: 42, invertir: false, orden: 2, fijo: true,
+    };
+    const v2 = metodoV1aV2(fabrica);
+    expect(v2.pasos).toHaveLength(1);
+    expect(v2.combinar).toBeUndefined();
+    expect(v2.deFabrica).toBe(true);
+  });
+});

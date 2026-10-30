@@ -22,6 +22,7 @@ import {
   cargarDesdeSupabase,
   cargarDatosDetalle,
   cargarMesesConDatos,
+  cargarFormulasComoMetodos,
   leerMesDeTrabajo,
   guardarMesDeTrabajo,
   guardarParametroMes,
@@ -105,6 +106,8 @@ export default function ProyeccionGypPage() {
   // trabajo guardado (para el bloqueo optimista al cambiarlo).
   const [mesesConDatos, setMesesConDatos] = useState<string[]>([]);
   const [revMes, setRevMes] = useState(0);
+  // C9 · Formulas propias convertidas a metodos (ver cargarFormulasComoMetodos).
+  const [metodosFormula, setMetodosFormula] = useState<Record<string, Metodo>>({});
   const [publicando, setPublicando] = useState(false);
 
   // Presupuesto del periodo (para Comparar, CP-45) y traza «¿Por qué?» (CP-35).
@@ -140,10 +143,13 @@ export default function ProyeccionGypPage() {
 
   // ── Métodos efectivos (fábrica + propios − borrados) ──
   const metodos = useMemo<Record<string, Metodo>>(() => {
-    const m: Record<string, Metodo> = { ...data.metodos, ...metodosUser };
+    // C9 · Las formulas propias entran como metodos mas (`f<id>`), para que una
+    // regla con `formula_id` las pueda usar. Van las ultimas, pero no colisionan
+    // con nada: ningun metodo de fabrica empieza por 'f' seguido de digitos.
+    const m: Record<string, Metodo> = { ...data.metodos, ...metodosUser, ...metodosFormula };
     metBorrados.forEach((k) => delete m[k]);
     return m;
-  }, [data.metodos, metodosUser, metBorrados]);
+  }, [data.metodos, metodosUser, metBorrados, metodosFormula]);
 
   // Presupuesto del mes por empresa|concepto (lo usa el método «presupuesto»).
   const pptoPorConcepto = useMemo(() => {
@@ -388,6 +394,9 @@ export default function ProyeccionGypPage() {
       // trabajas». Degrada a lista vacía: el componente cae a mostrar solo el
       // mes vigente, que es lo que hacía antes.
       cargarMesesConDatos().then(setMesesConDatos).catch(() => setMesesConDatos([]));
+      // C9 · Las formulas propias entran como metodos mas, para que una regla
+      // con `formula_id` las pueda usar. Sin esto nunca llegaban al motor.
+      cargarFormulasComoMetodos().then(setMetodosFormula).catch(() => setMetodosFormula({}));
 
       // Paso 1 (solo manual): pedirle al backend que consulte Fabric y escriba.
       if (manual) {
