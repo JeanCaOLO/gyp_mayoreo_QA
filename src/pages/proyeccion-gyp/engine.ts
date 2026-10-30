@@ -775,6 +775,10 @@ export function calcular({
           esVentaODerivada,
           diaDelCorte,
           diasDelMes,
+          // C4: lo asentado al corte en la cuenta de la regla. Sin esto, el modo
+          // 'real' devolvia `opts.asentadoAlCorte ?? 0`, es decir SIEMPRE 0:
+          // cualquier regla con "lo registrado al corte" causaba cero.
+          asentadoAlCorte: r.acum,
         });
       }
 

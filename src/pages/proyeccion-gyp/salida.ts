@@ -311,6 +311,35 @@ export interface InsumosPublicacion {
 }
 
 /**
+ * C3 · Deriva los datos del corte que necesita el causado por días calendario
+ * (§E) a partir del periodo (`'2026-10'`) y del corte (`'2026-10-07'`).
+ *
+ * FUENTE ÚNICA a propósito: lo usan la pantalla y la corrida programada
+ * server-side. Calculado por separado en cada sitio, acabarían divergiendo y
+ * la publicación manual y la programada darían causados distintos.
+ *
+ * Se parsea a mano, NO con `new Date('2026-10-07')`: ese constructor lee la
+ * cadena como UTC y en Caracas (UTC−4) `getDate()` devolvería el día anterior,
+ * corriendo todo el causado un día.
+ */
+export function datosDelCorte(
+  periodo: string | null | undefined,
+  corte: string | null | undefined,
+): { diaDelCorte?: number; diasDelMes?: number } {
+  const c = (corte ?? '').split('-').map(Number);
+  const p = (periodo ?? '').split('-').map(Number);
+  const dia = c[2];
+  const anio = p[0];
+  const mes = p[1];
+  return {
+    diaDelCorte: Number.isFinite(dia) ? dia : undefined,
+    // Día 0 del mes siguiente = último día de este mes.
+    diasDelMes:
+      Number.isFinite(anio) && Number.isFinite(mes) ? new Date(anio, mes, 0).getDate() : undefined,
+  };
+}
+
+/**
  * Construye las `FilaResultado` de los DOS escenarios (CP-01/CP-49): una fila por
  * regla, `proyeccion.val[i]` para el escenario 1 (Proyectado, `proyeccion=1`) y
  * `causado.val[i]` para el escenario 2 (Causado, `proyeccion=2`), alineados por

@@ -16,6 +16,7 @@ import {
   EMPRESAS,
   METODOS_BASE,
   PAIS,
+  datosDelCorte,
   type InsumosMotor,
   type Regla,
   type Metodo,
@@ -175,5 +176,10 @@ export async function cargarInsumos(
     };
   });
 
-  return { reglas, metodos, params, empresas: EMPRESAS, gn, corte };
+  // C3: la corrida programada tambien necesita los datos del corte, o publicaria
+  // el causado sin prorratear. Mismo helper que usa la pantalla, para que la
+  // publicacion manual y la programada no puedan divergir.
+  const { diaDelCorte, diasDelMes } = datosDelCorte(periodo, corte);
+
+  return { reglas, metodos, params, empresas: EMPRESAS, gn, corte, diaDelCorte, diasDelMes };
 }

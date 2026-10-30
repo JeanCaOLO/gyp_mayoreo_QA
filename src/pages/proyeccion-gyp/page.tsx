@@ -9,7 +9,7 @@ import {
   type AgregadoEmpresa,
 } from './engine';
 import { CIFRAS_VALIDADAS, EMPRESAS } from './seed';
-import { construirFilasEscenarios } from './salida';
+import { construirFilasEscenarios, datosDelCorte } from './salida';
 import {
   construirDesdeSemilla,
   cargarDesdeSupabase,
@@ -170,10 +170,34 @@ export default function ProyeccionGypPage() {
     return out;
   }, [data.reglasBase, data.series, overrides, nuevas, pptoPorConcepto]);
 
+  // ── C3 · Datos del corte para el causado por días calendario (§E) ──
+  //
+  // Sin ellos, `llevarACausado` devuelve el proyectado SIN prorratear: Gastos
+  // Varios de Beval con «Lo típico» al 7-oct causaba 85.224 en vez de
+  // 85.224 × 7 ÷ 31 = 19.244. El motor ya los aceptaba; la pantalla no los
+  // pasaba, así que el modo 'calendario' caía siempre a su respaldo.
+  //
+  // `datosDelCorte` vive en salida.ts y lo comparten esta pantalla y la corrida
+  // programada: si cada una lo calculara por su lado, la publicación manual y la
+  // programada acabarían dando causados distintos.
+  const { diaDelCorte, diasDelMes } = useMemo(
+    () => datosDelCorte(data.periodo, data.corte),
+    [data.corte, data.periodo],
+  );
+
   // ── Cálculo de los DOS escenarios (§H). La cabecera de KPIs necesita ambos. ──
   const escenarios = useMemo(
-    () => calcularEscenarios({ reglas, metodos, params, empresas: EMPRESAS, gn }),
-    [reglas, metodos, params, gn],
+    () =>
+      calcularEscenarios({
+        reglas,
+        metodos,
+        params,
+        empresas: EMPRESAS,
+        gn,
+        diaDelCorte,
+        diasDelMes,
+      }),
+    [reglas, metodos, params, gn, diaDelCorte, diasDelMes],
   );
   const { proyeccion, causado } = escenarios;
   const val = proyeccion.val;
@@ -199,7 +223,15 @@ export default function ProyeccionGypPage() {
       const rs = reglas.map((r) => (r.key === key ? { ...r, ...definidos } : r));
       const i = rs.findIndex((r) => r.key === key);
       if (i < 0) return null;
-      const esc = calcularEscenarios({ reglas: rs, metodos, params, empresas: EMPRESAS, gn });
+      const esc = calcularEscenarios({
+        reglas: rs,
+        metodos,
+        params,
+        empresas: EMPRESAS,
+        gn,
+        diaDelCorte,
+        diasDelMes,
+      });
       const emp = rs[i].empresa;
       return {
         proy: esc.proyeccion.val[i] ?? 0,
@@ -208,7 +240,7 @@ export default function ProyeccionGypPage() {
         snCaus: esc.causado.agg[emp]?.sn ?? 0,
       };
     },
-    [reglas, metodos, params, gn],
+    [reglas, metodos, params, gn, diaDelCorte, diasDelMes],
   );
 
   // Reglas eliminadas (borrado lógico) para el pie con «Restaurar» (CP-31).
@@ -636,6 +668,11 @@ export default function ProyeccionGypPage() {
         params,
         empresas: EMPRESAS,
         gn,
+        // C3: sin estos dos, lo PUBLICADO llevaba el causado sin prorratear
+        // aunque la pantalla lo mostrara bien. La tabla que va a Power BI y lo
+        // que se ve dejaban de coincidir.
+        diaDelCorte,
+        diasDelMes,
       });
       const filas = soloCausado ? todas.filter((f) => f.proyeccion === 2) : todas;
       const res = await publicarViaEdge(data.periodo, filas, undefined, soloCausado ? [2] : undefined);
