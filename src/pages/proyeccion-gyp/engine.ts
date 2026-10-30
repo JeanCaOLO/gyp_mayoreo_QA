@@ -266,6 +266,21 @@ export interface MetodoV2 {
   nombre: string;
   /** secuencia de pasos: fold izquierda a derecha, sin precedencia (CP-18). */
   pasos: Paso[];
+  /**
+   * C9 · Cómo se combinan los pasos.
+   *
+   * `'cadena'` (por defecto, y lo de siempre): fold de izquierda a derecha,
+   * cada paso opera sobre el resultado del anterior. Es lo que necesitan los
+   * métodos de fábrica de varios pasos.
+   *
+   * `'suma'`: cada paso se calcula POR SU CUENTA y se suman con su signo. Es lo
+   * que significa una fórmula propia — «sumas o restas piezas: un monto, un %
+   * de la venta, lo típico de unas cuentas…»—. Encadenadas, la segunda pieza
+   * tomaba la primera como base y el resultado no se parecía a nada.
+   *
+   * Omitirlo deja el comportamiento anterior intacto: los 190 casos no se mueven.
+   */
+  combinar?: 'cadena' | 'suma';
   /** turno 1..5; se deduce de las bases (§C). */
   orden: number;
   /** causado por defecto (§E). */
@@ -560,9 +575,14 @@ function evaluarPaso(paso: Paso, acc: number | undefined, valorEfectivo: number 
     }
     case 'derivada':
       return -ctx.cargoFijoDemas(r.empresa);
-    case 'componentes':
-      // Suma de otras reglas ya calculadas (6.1 lo resuelve por capas). Andamiaje.
-      return acc ?? 0;
+    case 'componentes': {
+      // C9 · Antes devolvia `acc ?? 0`, es decir 0 en el primer paso: una
+      // formula que empezara por esta pieza daba 0 entero y no se podia asignar
+      // a ninguna regla. Ahora resuelve su base como cualquier otro paso (la
+      // suma de las reglas que la base referencia) y aplica el signo.
+      const b = acc !== undefined ? acc : resolverBaseRef(paso.base, ctx);
+      return sg * b;
+    }
     case 'porcentaje':
     case 'multiplicar': {
       const b = acc !== undefined ? acc : resolverBaseRef(paso.base, ctx);
@@ -589,6 +609,16 @@ function evaluarPaso(paso: Paso, acc: number | undefined, valorEfectivo: number 
  */
 export function evaluarMetodoV2(m: MetodoV2, ctx: CtxPaso): number {
   const unSoloPaso = m.pasos.length === 1;
+
+  // C9 · Fórmula propia: cada pieza se calcula sola y se suman con su signo.
+  // `acc` va SIEMPRE en undefined para que ningún paso tome el anterior como
+  // base; el signo lo pone `invertir` dentro de `evaluarPaso`.
+  if (m.combinar === 'suma' && !unSoloPaso) {
+    let total = 0;
+    for (const paso of m.pasos) total += evaluarPaso(paso, undefined, paso.valor, ctx);
+    return total;
+  }
+
   let acc: number | undefined;
   for (let i = 0; i < m.pasos.length; i++) {
     const paso = m.pasos[i];
