@@ -9,7 +9,13 @@ import {
   type AgregadoEmpresa,
 } from './engine';
 import { CIFRAS_VALIDADAS, EMPRESAS } from './seed';
-import { construirFilasEscenarios, datosDelCorte } from './salida';
+import {
+  construirFilasEscenarios,
+  datosDelCorte,
+  fusionarPorCombinada,
+} from './salida';
+import { checklistPublicacion } from './checklist';
+import { desglosarRentaBrutaTodas } from './components/pruebaContable';
 import { aplicarHistoriaPorCuenta, type HistoriaDeCuenta } from './destino';
 import {
   construirDesdeSemilla,
@@ -19,6 +25,7 @@ import {
   leerMesDeTrabajo,
   guardarMesDeTrabajo,
   guardarParametroMes,
+  suscribirCambios,
   ensamblarReglas,
   publicarViaEdge,
   refrescarDesdeFabric,
@@ -57,7 +64,7 @@ import PestanaAlertas from './components/PestanaAlertas';
 import PestanaMisFormulas from './components/PestanaMisFormulas';
 import TrazaModal from './components/TrazaModal';
 import type { Traza } from './components/traza';
-import type { FilaHistoricoCuenta } from './capas';
+import type { FilaHistoricoCuenta, FilaDimCuenta } from './capas';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Formato y constantes de pestañas
@@ -104,6 +111,8 @@ export default function ProyeccionGypPage() {
   const [presupuesto, setPresupuesto] = useState<PresupuestoFila[]>([]);
   // Detalle por cuenta del mes: cuentas que ofrece «+ Agregar regla».
   const [detalleCuenta, setDetalleCuenta] = useState<FilaHistoricoCuenta[]>([]);
+  // P12 · El catálogo, para que el checklist pueda validar las Combinadas.
+  const [catalogo, setCatalogo] = useState<FilaDimCuenta[]>([]);
   // Alertas de revisión del catálogo del periodo (CP-34, pestaña Alertas).
   const [alertas, setAlertas] = useState<Alerta[]>([]);
   // Actualización programada (CP-56, pestaña Parámetros) y última publicación.
@@ -423,6 +432,27 @@ export default function ProyeccionGypPage() {
     traer(false);
   }, [traer]);
 
+  /**
+   * P9 · Cambios de otras personas, en vivo.
+   *
+   * `suscribirCambios` estaba escrita y documentada (CP-54) y no la llamaba
+   * nadie: había que recargar la página para ver lo que otro acababa de
+   * guardar. Dos personas trabajando el mismo mes se pisaban sin enterarse.
+   *
+   * El eco propio se ignora (`esEcoPropio`): el cambio ya se aplicó local y
+   * recargar por él provocaría un parpadeo en cada tecla.
+   */
+  useEffect(() => {
+    const cortar = suscribirCambios(data.periodo, {
+      onCualquiera: (c) => {
+        if (c.esEcoPropio) return;
+        traer(false);
+        addToast('info', 'Otra persona cambió algo de este mes: pantalla actualizada.');
+      },
+    });
+    return cortar;
+  }, [data.periodo, traer, addToast]);
+
   // ── Carga del detalle del periodo (presupuesto para Comparar, CP-45). Degrada
   //    en silencio si no hay detalle en la base: Comparar muestra el presupuesto
   //    como «—». ──
@@ -434,6 +464,7 @@ export default function ProyeccionGypPage() {
           setPresupuesto(d.presupuesto);
           setAlertas(d.alertas);
           setDetalleCuenta(d.historicoCuenta);
+          setCatalogo(d.catalogo);
         }
       })
       .catch(() => {
@@ -441,6 +472,7 @@ export default function ProyeccionGypPage() {
           setPresupuesto([]);
           setAlertas([]);
           setDetalleCuenta([]);
+          setCatalogo([]);
         }
       });
     return () => {
@@ -615,7 +647,27 @@ export default function ProyeccionGypPage() {
       });
   };
 
+  /**
+   * P7 · Restablecer descarta TODO el trabajo guardado y vuelve a la semilla.
+   *
+   * Antes lo hacía sin preguntar y el aviso decía «al estado validado por
+   * control», que es engañoso: la semilla es la foto del 7-oct, no lo que esté
+   * validado hoy. Alguien que leyera ese texto podía pulsarlo creyendo que
+   * recuperaba algo bueno, y perdía su trabajo del mes.
+   *
+   * Ahora pide confirmación DOS veces —la segunda dice exactamente qué se
+   * pierde— y el aviso ya no promete validación.
+   */
   const restablecer = () => {
+    if (!window.confirm(
+      'Restablecer descarta TODAS las reglas, métodos y parámetros de esta ' +
+      'pantalla y vuelve a la foto de partida. ¿Seguro?',
+    )) return;
+    if (!window.confirm(
+      'Última comprobación: se perderá el trabajo del mes que no esté ' +
+      'publicado. ¿Restablecer de todos modos?',
+    )) return;
+
     const seed = construirDesdeSemilla();
     setData(seed);
     setParams(seed.params);
@@ -624,7 +676,7 @@ export default function ProyeccionGypPage() {
     setOverrides({});
     setNuevas([]);
     setGn(9);
-    addToast('info', 'Se restableció todo al estado validado por control.');
+    addToast('info', 'Se restableció todo a la foto de partida (semilla del 7-oct).');
   };
 
   // La creación y el borrado de métodos vivían en la tabla editable de Reglas,
@@ -778,12 +830,54 @@ export default function ProyeccionGypPage() {
   // `soloCausado` ANEXA el escenario 2 a v_proyeccion_final: la Edge Function
   // reemplaza solo (periodo, escenario = 2) y deja intacto el proyectado.
   const publicar = async (soloCausado = false) => {
-    // CP-47 / Req 22.3: la prueba contable gobierna la publicación.
-    if (pruebaMalasCP47.length) {
+    // P12 · La prueba contable se calcula AQUI, no en la pestaña Resultado.
+    //
+    // Antes `pruebaMalasCP47` solo se llenaba cuando esa pestaña estaba montada:
+    // publicar sin haberla abierto saltaba el control por completo. Un control
+    // que depende de qué pestaña miraste no es un control.
+    const desglosesAhora = desglosarRentaBrutaTodas(EMPRESAS, reglas, val, agg);
+    const malas = desglosesAhora.filter((d) => !d.cuadra).map((d) => d.empresa);
+    if (malas.length) {
       addToast(
         'error',
-        `No se publica: la prueba contable de la Renta Bruta no cuadra en ${pruebaMalasCP47.join(', ')}.`,
+        `No se publica: la prueba contable de la Renta Bruta no cuadra en ${malas.join(', ')}.`,
       );
+      return;
+    }
+
+    // P12 · Y el CHECKLIST de publicación (CP-44), que estaba escrito y no se
+    // usaba en ningún sitio. Comprueba las llaves, el catálogo, la FECHA, el
+    // país, la tasa, los duplicados y el cuadre reglas+resto sobre las filas
+    // REALES que se van a publicar.
+    try {
+      const todas = construirFilasEscenarios(data.periodo, {
+        reglas, metodos, params, empresas: EMPRESAS, gn, diaDelCorte, diasDelMes,
+      });
+      const chk = checklistPublicacion(
+        ([1, 2] as const).map((n) => ({
+          proyeccion: n,
+          nombre: n === 1 ? 'Proyectado' : 'Causado',
+          filas: fusionarPorCombinada(todas.filter((f) => f.proyeccion === n)),
+          desgloses: desglosesAhora,
+          cuadres: [],
+        })),
+        {
+          periodo: data.periodo,
+          empresas: EMPRESAS,
+          // El catálogo sale de dim_cuenta. Vacío = no se puede validar contra
+          // él; la comprobación 3 lo dice en vez de marcar todo como huérfano.
+          dimCuenta: new Set(catalogo.map((d) => d.combinada)),
+        },
+      );
+      if (!chk.puedePublicar) {
+        const fallan = chk.items.filter((i) => !i.ok && i.bloqueante).map((i) => i.titulo);
+        addToast('error', `No se publica. Falla el checklist: ${fallan.join(' · ')}`);
+        return;
+      }
+    } catch (e) {
+      // D8 puede negarse a construir las filas (sin tasa o sin país). Es
+      // exactamente lo que debe impedir publicar, y con su propio mensaje.
+      addToast('error', `No se publica: ${(e as Error).message}`);
       return;
     }
     if (
@@ -989,6 +1083,7 @@ export default function ProyeccionGypPage() {
         <PestanaResultado
           empresas={EMPRESAS}
           agg={agg}
+          aggCausado={causado.agg}
           cifrasValidadas={CIFRAS_VALIDADAS}
           tot={tot}
           reglas={reglas}
@@ -1003,6 +1098,11 @@ export default function ProyeccionGypPage() {
       {tab === 'salida' && (
         <PestanaTablaSalida
           reglas={reglas}
+          metodos={metodos}
+          empresas={EMPRESAS}
+          gn={gn}
+          diaDelCorte={diaDelCorte}
+          diasDelMes={diasDelMes}
           val={val}
           valCausado={causado.val}
           params={params}

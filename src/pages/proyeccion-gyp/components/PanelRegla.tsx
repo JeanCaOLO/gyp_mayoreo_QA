@@ -1,3 +1,4 @@
+import { etiquetaConcepto } from '../seed';
 import { useCallback, useMemo, useState } from 'react';
 import {
   formula,
@@ -302,7 +303,7 @@ export default function PanelRegla({
       {/* Cabecera del panel */}
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-900">
-          {regla.empresa} · {regla.concepto}
+          {regla.empresa} · {etiquetaConcepto(regla.concepto)}
         </h3>
         <span className="font-mono text-[11px] text-slate-500">{regla.combinada}</span>
       </div>

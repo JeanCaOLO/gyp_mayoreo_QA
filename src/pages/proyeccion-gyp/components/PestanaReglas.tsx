@@ -1,3 +1,4 @@
+import { etiquetaConcepto } from '../seed';
 import { Fragment, useMemo, useState } from 'react';
 import {
   type Causado,
@@ -401,7 +402,7 @@ export default function PestanaReglas({
             {eliminadas.map((e) => (
               <div key={e.key} className="flex items-center justify-between text-xs text-slate-500">
                 <span>
-                  {e.empresa} · {e.concepto}{' '}
+                  {e.empresa} · {etiquetaConcepto(e.concepto)}{' '}
                   <span className="font-mono text-[11px] text-slate-400">{e.combinada}</span>
                 </span>
                 <button
@@ -480,7 +481,7 @@ function BloqueTabla({
                           abierto ? 'rotate-90' : ''
                         }`}
                       />
-                      {r.concepto}
+                      {etiquetaConcepto(r.concepto)}
                     </div>
                     <div className="flex flex-wrap items-center gap-1 pl-5">
                       {r.nombre && <span className="text-[11px] text-slate-500">{r.nombre}</span>}

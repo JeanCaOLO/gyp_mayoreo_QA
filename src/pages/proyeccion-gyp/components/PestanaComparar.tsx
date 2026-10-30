@@ -1,3 +1,4 @@
+import { etiquetaConcepto } from '../seed';
 import { Fragment, useMemo, useState } from 'react';
 import type { Metodo, Parametro, Regla } from '../engine';
 import type { PresupuestoFila } from '../data';
@@ -170,7 +171,7 @@ export default function PestanaComparar({
                                   abierto ? 'rotate-90' : ''
                                 }`}
                               />
-                              {f.concepto}
+                              {etiquetaConcepto(f.concepto)}
                               <span className="ml-1 rounded-full bg-slate-100 px-1.5 text-[10px] text-slate-500">
                                 {f.reglas.length} reglas
                               </span>
@@ -182,7 +183,7 @@ export default function PestanaComparar({
                               className="text-left hover:text-emerald-700 hover:underline"
                               title="¿Por qué este número?"
                             >
-                              {f.concepto}
+                              {etiquetaConcepto(f.concepto)}
                             </button>
                           )}
                         </td>
