@@ -15,6 +15,10 @@ import {
   construirDesdeSemilla,
   cargarDesdeSupabase,
   cargarDatosDetalle,
+  cargarMesesConDatos,
+  leerMesDeTrabajo,
+  guardarMesDeTrabajo,
+  guardarParametroMes,
   ensamblarReglas,
   publicarViaEdge,
   refrescarDesdeFabric,
@@ -41,7 +45,10 @@ import {
 } from './data';
 import SelloFrescura from './components/SelloFrescura';
 import KpiHeader from './components/KpiHeader';
-import PestanaParametros from './components/PestanaParametros';
+import PestanaParametros, {
+  estadoDelPeriodo,
+  type EstadoMes,
+} from './components/PestanaParametros';
 import PestanaReglas, { type Override, type NuevaRegla } from './components/PestanaReglas';
 import PestanaResultado from './components/PestanaResultado';
 import PestanaTablaSalida from './components/PestanaTablaSalida';
@@ -87,6 +94,10 @@ export default function ProyeccionGypPage() {
   const [metBorrados, setMetBorrados] = useState<string[]>([]);
   const [overrides, setOverrides] = useState<Record<string, Override>>({});
   const [nuevas, setNuevas] = useState<NuevaRegla[]>([]);
+  // P1 · Meses que de verdad tienen datos extraídos, y el `rev` del mes de
+  // trabajo guardado (para el bloqueo optimista al cambiarlo).
+  const [mesesConDatos, setMesesConDatos] = useState<string[]>([]);
+  const [revMes, setRevMes] = useState(0);
   const [publicando, setPublicando] = useState(false);
 
   // Presupuesto del periodo (para Comparar, CP-45) y traza «¿Por qué?» (CP-35).
@@ -230,6 +241,27 @@ export default function ProyeccionGypPage() {
     [data.corte, data.periodo],
   );
 
+  // ── P1 · Tarjetas de «Sobre qué mes trabajas» ──
+  //
+  // Una por mes CON DATOS, de la más reciente a la más antigua. Antes la lista
+  // llegaba vacía y el componente caía a mostrar solo el mes vigente, con el
+  // aviso «la lista completa se tomará de gyp_historico_mensual»: la promesa
+  // estaba escrita en pantalla y nadie la había conectado.
+  //
+  // Los días hábiles y el corte solo se conocen del mes vigente (vienen de
+  // `proyeccion_parametro`, que guarda un único periodo); los demás meses se
+  // muestran como terminados, que es lo que son.
+  const mesesParaElegir = useMemo<EstadoMes[]>(() => {
+    if (!mesesConDatos.length) return [];
+    const diasV = EMPRESAS.map((e) => params[e]?.dias).find((d) => d != null) ?? null;
+    const transV = EMPRESAS.map((e) => params[e]?.trans).find((t) => t != null) ?? null;
+    return mesesConDatos.map((m) =>
+      m === data.periodo
+        ? estadoDelPeriodo(m, data.corte, data.fuente, diasV, transV)
+        : { periodo: m, corte: null, fase: 'terminado' as const },
+    );
+  }, [mesesConDatos, data.periodo, data.corte, data.fuente, params]);
+
   // ── Cálculo de los DOS escenarios (§H). La cabecera de KPIs necesita ambos. ──
   const escenarios = useMemo(
     () =>
@@ -322,6 +354,19 @@ export default function ProyeccionGypPage() {
   const traer = useCallback(
     async (manual: boolean) => {
       const seed = construirDesdeSemilla();
+
+      // P1 · El mes de trabajo sale de la configuración COMPARTIDA, no del
+      // calendario ni de la constante de la semilla. Si la tabla todavía no
+      // existe, se conserva el de la semilla y la pantalla sigue funcionando.
+      const guardado = await leerMesDeTrabajo();
+      if (guardado) {
+        seed.periodo = guardado.periodo;
+        setRevMes(guardado.rev);
+      }
+      // Meses que de verdad tienen datos, para las tarjetas de «Sobre qué mes
+      // trabajas». Degrada a lista vacía: el componente cae a mostrar solo el
+      // mes vigente, que es lo que hacía antes.
+      cargarMesesConDatos().then(setMesesConDatos).catch(() => setMesesConDatos([]));
 
       // Paso 1 (solo manual): pedirle al backend que consulte Fabric y escriba.
       if (manual) {
@@ -638,13 +683,39 @@ export default function ProyeccionGypPage() {
       setOverrides({});
       setNuevas([]);
       setData((d) => ({ ...d, periodo: nuevoPeriodo }));
-      addToast('info', `Mes de trabajo fijado en ${nuevoPeriodo} para todos.`);
+
+      // P1 · Se GUARDA de verdad. Antes esto solo hacía `setData`: el aviso
+      // decía «para todos» y al recargar volvía atrás. Si la tabla de
+      // configuración todavía no existe, el cambio vale para esta sesión y se
+      // dice claramente, en vez de prometer algo que no pasó.
+      guardarMesDeTrabajo(nuevoPeriodo, revMes).then((r) => {
+        if (r.ok) {
+          setRevMes(r.rev ?? revMes + 1);
+          addToast('info', `Mes de trabajo fijado en ${nuevoPeriodo} para todos.`);
+        } else if (r.motivo === 'conflicto') {
+          addToast('error', 'Otra persona cambió el mes de trabajo. Actualiza para ver el suyo.');
+        } else {
+          addToast('info', `Mes cambiado a ${nuevoPeriodo} solo en esta pantalla (no se pudo guardar).`);
+        }
+      });
     },
-    [data.periodo, addToast],
+    [data.periodo, addToast, revMes],
   );
 
   // El factor se guarda POR MES (CP-33 / CP-37). Actualiza el estado local y lo
   // persiste vía `guardarFactorMes(periodo, empresa, factor)`.
+  // P2 · Guarda dias, transcurridos y tasa del mes. El factor va aparte
+  // (`factorMes`): lo fija control y no debe pisarse desde aqui.
+  const parametroMes = useCallback(
+    (empresa: string, campos: { dias?: number; trans?: number; tasa?: number | null }) => {
+      setParams((prev) => ({ ...prev, [empresa]: { ...prev[empresa], ...campos } }));
+      guardarParametroMes(data.periodo, empresa, campos).then((r) => {
+        if (!r.ok) addToast('error', `No se pudieron guardar los parametros de ${empresa}.`);
+      });
+    },
+    [data.periodo, addToast],
+  );
+
   const factorMes = useCallback(
     (empresa: string, factor: number) => {
       setParams((prev) => ({ ...prev, [empresa]: { ...prev[empresa], factor } }));
@@ -863,7 +934,9 @@ export default function ProyeccionGypPage() {
           corte={data.corte}
           fuente={data.fuente}
           onElegirMes={elegirMes}
+          mesesDisponibles={mesesParaElegir}
           onFactorMes={factorMes}
+          onParametroMes={parametroMes}
           programacion={programacion}
           onGuardarProgramacion={guardarProg}
           ultimaPublicacion={ultimaPublicacion}

@@ -1372,6 +1372,34 @@ export async function guardarFactorMes(
   return { ok: true };
 }
 
+/**
+ * P2 · Guarda los parámetros editables del mes: días hábiles, transcurridos y
+ * tasa local.
+ *
+ * Antes solo se guardaba el factor. Días y transcurridos se podían editar en
+ * pantalla y se perdían al recargar, y la tasa ni siquiera era editable, así
+ * que una tasa mal extraída no se podía corregir sin tocar la base a mano.
+ *
+ * NO toca `factor_correccion`: lo fija control y tiene su propia función
+ * (`guardarFactorMes`). Mezclarlos aquí arriesgaría pisarlo.
+ */
+export async function guardarParametroMes(
+  periodo: string,
+  empresa: string,
+  campos: { dias?: number; trans?: number; tasa?: number | null },
+): Promise<ResultadoEscritura> {
+  const parche: Record<string, unknown> = { periodo, empresa };
+  if (campos.dias !== undefined) parche.dias_habiles_mes = campos.dias;
+  if (campos.trans !== undefined) parche.dias_transcurridos = campos.trans;
+  if (campos.tasa !== undefined) parche.tasa_local = campos.tasa;
+  const { error } = await supabase
+    .from('proyeccion_parametro')
+    .upsert(parche, { onConflict: 'periodo,empresa' })
+    .select('periodo,empresa');
+  if (error) return { ok: false, motivo: 'error', error };
+  return { ok: true };
+}
+
 /** Respuesta de la Edge Function `corrida-programada`. */
 export interface ResultadoCorrida {
   ok: boolean;
@@ -1729,4 +1757,78 @@ export async function cargarUltimaPublicacion(periodo: string): Promise<Corrida 
     mensaje: r.mensaje ?? null,
     lanzadaPor: r.lanzada_por ?? null,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P1 · Mes de trabajo: elección GUARDADA y COMPARTIDA
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// No se deriva del calendario a propósito. Los primeros días de noviembre se
+// sigue cerrando octubre; si la pantalla saltara sola al mes nuevo habría que
+// volver atrás a mano cada vez — o peor, publicar el mes equivocado sin notarlo.
+//
+// Todo degrada en silencio si `proyeccion_config` todavía no existe (la
+// migración 20261030130000 no está aplicada): se conserva el comportamiento de
+// antes en vez de romper la pantalla.
+
+/** Mes de trabajo guardado, con su `rev` para el bloqueo optimista. */
+export interface MesDeTrabajo {
+  periodo: string;
+  rev: number;
+}
+
+/**
+ * Lee el mes de trabajo compartido. Devuelve `null` si la tabla no existe o
+ * está vacía: el llamador conserva entonces su valor por defecto.
+ */
+export async function leerMesDeTrabajo(): Promise<MesDeTrabajo | null> {
+  const { data, error } = await supabase
+    .from('proyeccion_config')
+    .select('periodo_trabajo,rev')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error || !data) return null;
+  const row = data as { periodo_trabajo: string; rev: number };
+  return { periodo: row.periodo_trabajo, rev: row.rev ?? 0 };
+}
+
+/**
+ * Guarda el mes de trabajo para TODO el mundo, con bloqueo optimista por `rev`
+ * (CP-38): si alguien se adelantó, no se pisa su cambio y se devuelve
+ * `conflicto` para que la pantalla recargue.
+ */
+export async function guardarMesDeTrabajo(
+  periodo: string,
+  rev: number,
+  quien?: string,
+): Promise<{ ok: boolean; motivo?: 'conflicto' | 'error'; rev?: number }> {
+  const { data, error } = await supabase
+    .from('proyeccion_config')
+    .update({
+      periodo_trabajo: periodo,
+      rev: rev + 1,
+      actualizado: new Date().toISOString(),
+      actualizado_por: quien ?? null,
+    })
+    .eq('id', 1)
+    .eq('rev', rev)
+    .select('rev');
+  if (error) return { ok: false, motivo: 'error' };
+  if (!data || data.length === 0) return { ok: false, motivo: 'conflicto' };
+  return { ok: true, rev: (data[0] as { rev: number }).rev };
+}
+
+/**
+ * Meses que de verdad tienen datos extraídos, del más reciente al más antiguo.
+ *
+ * Sale de `gyp_historico_mensual`, que es la única fuente que sabe qué meses se
+ * extrajeron. La pantalla ofrece al menos el mes en curso y el anterior, que es
+ * lo que hace falta para cerrar un mes mientras ya empezó el siguiente.
+ */
+export async function cargarMesesConDatos(limite = 12): Promise<string[]> {
+  const filas = await leerPaginado<{ periodo: string }>((desde, hasta) =>
+    supabase.from('gyp_historico_mensual').select('periodo').range(desde, hasta),
+  );
+  if (!filas) return [];
+  return [...new Set(filas.map((f) => f.periodo))].sort().reverse().slice(0, limite);
 }

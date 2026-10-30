@@ -161,6 +161,15 @@ export default function PanelRegla({
     cc: regla.cc,
   });
   const [avanzado, setAvanzado] = useState(false);
+  /**
+   * P5 · Borrador del campo de porcentaje/monto mientras se escribe.
+   *
+   * El campo se reformateaba en CADA tecla: `value` salia de
+   * `(valor * 100).toFixed(2)`, asi que escribir "35" dejaba "3,01" y no se
+   * podia borrar el contenido. Mientras el campo tiene el foco manda lo que la
+   * persona escribio; al salir se vuelve a formatear.
+   */
+  const [txtValor, setTxtValor] = useState<string | null>(null);
   const [creando, setCreando] = useState(false);
 
   const set = <K extends keyof Borrador>(k: K, v: Borrador[K]) => setB((p) => ({ ...p, [k]: v }));
@@ -426,16 +435,20 @@ export default function PanelRegla({
               type="number"
               step={0.01}
               value={
-                m.op === 'porcentaje'
+                txtValor ??
+                (m.op === 'porcentaje'
                   ? ((b.valor ?? m.valor ?? 0) * 100).toFixed(2)
-                  : Math.round(b.valor ?? m.valor ?? 0)
+                  : String(Math.round(b.valor ?? m.valor ?? 0)))
               }
-              onChange={(e) =>
-                set(
-                  'valor',
-                  m.op === 'porcentaje' ? (+e.target.value || 0) / 100 : +e.target.value || 0,
-                )
-              }
+              onChange={(e) => {
+                const txt = e.target.value;
+                setTxtValor(txt); // manda lo escrito mientras se escribe
+                const v = parseFloat(txt);
+                // Un campo vacio o a medias ("-", "0.") no se guarda como 0:
+                // se deja el valor anterior hasta que haya un numero usable.
+                if (Number.isFinite(v)) set('valor', m.op === 'porcentaje' ? v / 100 : v);
+              }}
+              onBlur={() => setTxtValor(null)} // al salir, se vuelve a formatear
               className="w-28 rounded border border-slate-200 px-2 py-1.5 text-right font-mono text-sm"
             />
           </label>
