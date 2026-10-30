@@ -755,9 +755,25 @@ serve(async (req: Request) => {
     if (dimCuenta) {
       catalogo = new Set(dimCuenta);
     } else {
-      const { data: dc } = await db.from("dim_cuenta").select("combinada");
-      // Catálogo vacío = aún no cargado por Fabric: no hay contra qué validar.
-      if (dc && dc.length) catalogo = new Set(dc.map((r: { combinada: string }) => r.combinada));
+      // D2: PAGINADO. Supabase corta en 1.000 filas y no avisa. dim_cuenta va
+      // por ~8.800: sin paginar, el checklist veia 1.000 cuentas y declaraba
+      // huerfanas las otras 7.800, bloqueando la publicacion por un catalogo
+      // truncado y no por un problema real.
+      const dc: { combinada: string }[] = [];
+      for (let desde = 0; ; desde += 1000) {
+        const { data: pagina, error: eCat } = await db
+          .from("dim_cuenta")
+          .select("combinada")
+          .range(desde, desde + 999);
+        // Un fallo de lectura NO es un catalogo vacio: dejarlo pasar en silencio
+        // desactivaria la validacion justo cuando menos hay que confiar en ella.
+        if (eCat) throw new Error("No se pudo leer dim_cuenta: " + eCat.message);
+        if (!pagina || pagina.length === 0) break;
+        dc.push(...(pagina as { combinada: string }[]));
+        if (pagina.length < 1000) break;
+      }
+      // Catalogo vacio = aun no cargado por Fabric: no hay contra que validar.
+      if (dc.length) catalogo = new Set(dc.map((r) => r.combinada));
     }
 
     const items = checklistMinimo(filas, periodo, catalogo);

@@ -149,12 +149,24 @@ export async function cargarInsumos(
   }
 
   // ── Presupuesto del mes por empresa|concepto (método «presupuesto») ──
-  const { data: pp } = await db
-    .from('gyp_historico_cuenta')
-    .select('empresa,concepto,presupuesto')
-    .eq('periodo', periodo);
+  // D2: PAGINADO. gyp_historico_cuenta va por ~1.900 filas en un solo periodo,
+  // asi que sin paginar el metodo «presupuesto» trabajaba con la MITAD del
+  // presupuesto y sin dar ningun error.
+  type FilaPpto = { empresa: string; concepto: string; presupuesto: number | null };
+  const pp: FilaPpto[] = [];
+  for (let desde = 0; ; desde += 1000) {
+    const { data: pagina, error: ePpto } = await db
+      .from('gyp_historico_cuenta')
+      .select('empresa,concepto,presupuesto')
+      .eq('periodo', periodo)
+      .range(desde, desde + 999);
+    if (ePpto) throw new Error('No se pudo leer el presupuesto: ' + ePpto.message);
+    if (!pagina || pagina.length === 0) break;
+    pp.push(...(pagina as FilaPpto[]));
+    if (pagina.length < 1000) break;
+  }
   const ppto = new Map<string, number>();
-  for (const f of (pp ?? []) as { empresa: string; concepto: string; presupuesto: number | null }[]) {
+  for (const f of pp) {
     const key = f.empresa + '|' + f.concepto;
     ppto.set(key, (ppto.get(key) ?? 0) + (Number(f.presupuesto) || 0));
   }
