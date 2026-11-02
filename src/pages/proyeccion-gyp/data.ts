@@ -26,6 +26,13 @@ import type {
 } from './engine';
 import { PAIS } from './engine';
 import type { FilaHistoricoCuenta, FilaDimCuenta } from './capas';
+import type { LineaPresupuesto } from './presupuesto';
+import {
+  agregarPorCuenta,
+  conceptosPorCuenta,
+  normalizarEmpresa,
+  repartirEnConceptos,
+} from './presupuesto';
 import {
   METODOS_BASE,
   PARAMS_SEED,
@@ -572,17 +579,96 @@ export async function cargarAlertas(periodo: string): Promise<Alerta[]> {
 }
 
 /**
- * Lee el presupuesto del periodo. El presupuesto viaja en el detalle por cuenta
- * (`gyp_historico_cuenta.presupuesto`); esta función lo agrega por empresa y
- * concepto para que el motor y la interfaz lo consuman a nivel de concepto.
+ * Lee las líneas de presupuesto del periodo desde `presupuestos_lineas`, que es
+ * donde las carga el módulo Presupuestos de esta misma aplicación.
  *
- * Acepta el detalle ya leído (para no releer la tabla) o lo lee si no se pasa.
+ * `presupuestos_lineas` guarda año y mes en columnas aparte, no un `periodo`
+ * de texto; de ahí el troceo del `YYYY-MM`. El nombre de la empresa sale de
+ * `companias` y se traduce al del módulo (ver `normalizarEmpresa`).
+ *
+ * Solo líneas `activa = true`: el módulo Presupuestos borra lógicamente, y una
+ * carga retirada no debe seguir contando.
+ */
+export async function cargarLineasPresupuesto(periodo: string): Promise<LineaPresupuesto[]> {
+  const [anioTxt, mesTxt] = periodo.split('-');
+  const anio = Number(anioTxt);
+  const mes = Number(mesTxt);
+  if (!Number.isFinite(anio) || !Number.isFinite(mes)) return [];
+
+  const { data: comps, error: eComp } = await supabase.from('companias').select('id,nombre');
+  if (eComp) return [];
+  const nombreDe = new Map<string, string>();
+  (comps as RowCompania[] | null)?.forEach((c) => nombreDe.set(c.id, c.nombre ?? ''));
+
+  // D2: paginado. Son ~9.600 líneas en total y, aunque un mes suelto cabe de
+  // sobra en una página, el filtro podría ampliarse y el corte de Supabase no
+  // avisa.
+  const data = await leerPaginado<RowLineaPresupuesto>((desde, hasta) =>
+    supabase
+      .from('presupuestos_lineas')
+      .select('cuenta,monto_usd,compania_id,activa')
+      .eq('anio', anio)
+      .eq('mes', mes)
+      .eq('activa', true)
+      .range(desde, hasta),
+  );
+  if (!data) return [];
+
+  return data.map((r) => ({
+    empresa: normalizarEmpresa(nombreDe.get(r.compania_id ?? '')),
+    cuenta: (r.cuenta ?? '').trim(),
+    montoUsd: numeroODefault(r.monto_usd),
+  }));
+}
+
+/**
+ * El presupuesto del periodo, agregado por empresa y concepto.
+ *
+ * CAMBIO DE FUENTE: antes salía de `gyp_historico_cuenta.presupuesto`, que
+ * llenaba el notebook de Fabric cruzando el presupuesto contra el mayor por
+ * `Combinada`. Ese cruce resolvía 3 de 90 llaves y dejaba 17 de los 18
+ * conceptos en 0 —sin dar ningún error—, porque el presupuesto no tiene
+ * dimensión de centro de costo y la llave del mayor sí. El porqué completo
+ * está en `presupuesto.ts`.
+ *
+ * Ahora se lee de `presupuestos_lineas` y se agrega por **cuenta + empresa**,
+ * que es el grano al que el presupuesto existe de verdad. El concepto se
+ * resuelve con el catálogo, y el detalle del mes pondera el reparto cuando una
+ * cuenta cae en más de un concepto.
+ *
+ * Acepta el detalle y el catálogo ya leídos para no releer esas tablas.
+ *
+ * SI LA LECTURA NUEVA NO DA NADA se cae a la columna vieja. No es por prudencia
+ * decorativa: mientras el notebook siga escribiendo esa columna, un mes sin
+ * líneas cargadas en el módulo Presupuestos conserva lo que haya en vez de
+ * mostrar un cero nuevo. El día que la columna desaparezca, esto se borra.
  */
 export async function cargarPresupuesto(
   periodo: string,
   detalle?: FilaHistoricoCuenta[],
+  catalogo?: FilaDimCuenta[],
 ): Promise<PresupuestoFila[]> {
   const filas = detalle ?? (await cargarDetalleCuenta(periodo));
+  const lineas = await cargarLineasPresupuesto(periodo);
+
+  if (lineas.length) {
+    const dim = catalogo ?? (await cargarCatalogo());
+    // El catálogo aporta QUÉ conceptos tiene cada cuenta; el detalle del mes,
+    // CUÁNTO pesa cada uno. Los dos, en ese orden: una cuenta presupuestada sin
+    // movimiento este mes existe en el catálogo y no en el detalle.
+    const conceptos = conceptosPorCuenta([
+      ...dim.map((d) => ({ empresa: d.empresa, cuenta: d.cuenta, concepto: d.concepto })),
+      ...filas.map((f) => ({
+        empresa: f.empresa,
+        cuenta: f.cuenta,
+        concepto: f.concepto,
+        acumulado: f.acumulado,
+      })),
+    ]);
+    const { porConcepto } = repartirEnConceptos(agregarPorCuenta(lineas), conceptos);
+    if (porConcepto.length) return porConcepto;
+  }
+
   const acum = new Map<string, PresupuestoFila>();
   for (const f of filas) {
     const empresa = f.empresa ?? '';
@@ -615,6 +701,20 @@ export async function cargarTasas(periodo: string): Promise<TasaEmpresa[]> {
 
 interface RowResumen {
   periodo: string; empresa: string; concepto: string; monto_usd: number;
+}
+
+/** Fila cruda de `companias` (solo lo que hace falta para nombrar la empresa). */
+interface RowCompania {
+  id: string;
+  nombre: string | null;
+}
+
+/** Fila cruda de `presupuestos_lineas` del mes. */
+interface RowLineaPresupuesto {
+  cuenta: string | null;
+  monto_usd: number | string | null;
+  compania_id: string | null;
+  activa: boolean | null;
 }
 
 /**
@@ -672,7 +772,7 @@ export async function cargarDatosDetalle(periodo: string): Promise<DatosDetalle>
     cargarAlertas(periodo),
   ]);
   const [presupuesto, tasas] = await Promise.all([
-    cargarPresupuesto(periodo, historicoCuenta),
+    cargarPresupuesto(periodo, historicoCuenta, catalogo),
     cargarTasas(periodo),
   ]);
 
