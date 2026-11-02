@@ -31,6 +31,12 @@
  *
  * Ganancia adicional: lo que Control carga se ve al instante, sin esperar a que
  * corra el notebook.
+ *
+ * FUENTE OFICIAL (confirmado por Control el 2026-11-02): `presupuestos_lineas`
+ * es la única entrada del presupuesto. Nadie lo carga directamente en Gold, así
+ * que leer de aquí no deja fuera ninguna vía de carga. Si algún día alguien
+ * empieza a cargarlo en Gold, este módulo deja de verlo — y esa es la razón de
+ * dejar la confirmación escrita y fechada.
  */
 
 /** Una línea de `presupuestos_lineas`, ya resuelto el nombre de la empresa. */
