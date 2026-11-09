@@ -177,6 +177,8 @@ export function ensamblarReglas(
 interface RowParametro {
   periodo: string; empresa: string; dias_habiles_mes: number; dias_transcurridos: number;
   factor_correccion: number; tasa_local: number | null; corte: string | null;
+  /** Cuándo se escribieron estos días/corte. Respalda el sello de frescura. */
+  updated_at?: string | null;
 }
 interface RowMetodo {
   id: string; nombre: string; operacion: Operacion; base: string; valor: number | null;
@@ -210,6 +212,9 @@ export async function cargarDesdeSupabase(
     reglasBase: seed.reglasBase.map((r) => ({ ...r })),
   };
   let encontroAlgo = false;
+  // Lo más reciente que se escribió en los parámetros del mes. Respalda el
+  // sello cuando la extracción no dejó rastro en la bitácora (ver más abajo).
+  let escrituraParametros: string | null = null;
 
   // Parámetros
   const { data: pr } = await supabase
@@ -218,6 +223,8 @@ export async function cargarDesdeSupabase(
     .eq('periodo', periodo);
   if (pr && pr.length) {
     (pr as RowParametro[]).forEach((row) => {
+      if (row.updated_at && (!escrituraParametros || row.updated_at > escrituraParametros))
+        escrituraParametros = row.updated_at;
       if (!EMPRESAS.includes(row.empresa)) return;
       const prev = data.params[row.empresa];
       data.params[row.empresa] = {
@@ -342,9 +349,20 @@ export async function cargarDesdeSupabase(
     const fila = ult[0] as { fin: string | null; inicio: string; corte: string | null };
     data.generado = (fila.fin ?? fila.inicio).slice(0, 16).replace('T', ' ');
     if (fila.corte) data.corte = fila.corte;
+  } else if (escrituraParametros) {
+    // Sin fila de extracción en la bitácora, pero con parámetros escritos: los
+    // datos entraron por el notebook de Fabric (el espejo de Gold a Supabase),
+    // que escribe días, corte e historia pero NO deja rastro en
+    // `proyeccion_corrida`. La cabecera decía «sin fecha» aunque los datos
+    // tuvieran fecha de sobra.
+    //
+    // No es una fecha inventada: es cuándo se escribieron de verdad los días y
+    // el corte que la pantalla está mostrando. La guarda de frescura que
+    // decide si se publica vive en el servidor y mira el `corte`, no esto.
+    data.generado = (escrituraParametros as string).slice(0, 16).replace('T', ' ');
   } else {
-    // Sin bitácora no se inventa una fecha: se dice que no se sabe. Un sello
-    // falso es peor que ninguno, porque la guarda de frescura se lo cree.
+    // Sin bitácora y sin parámetros no se inventa una fecha: se dice que no se
+    // sabe. Un sello falso es peor que ninguno.
     data.generado = null;
   }
 
