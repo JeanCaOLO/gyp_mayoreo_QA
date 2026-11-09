@@ -1,6 +1,7 @@
 import type { Metodo, Regla, Parametro } from '../engine';
 import type { Fuente, Programacion, CambiosProgramacion, Corrida } from '../data';
 import { fmt } from './formato';
+import { mesSeleccionable } from '../meses';
 import PanelProgramacion from './PanelProgramacion';
 
 /**
@@ -213,18 +214,24 @@ export default function PestanaParametros({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {meses.map((m) => {
             const activo = m.periodo === periodo;
-            const deshabilitado = m.fase === 'sin_datos';
+            // Un mes SIN datos tiene que poder elegirse: elegirlo es justamente
+            // lo que arrastra sus reglas y habilita la extraccion que le trae
+            // los datos. Deshabilitarlo creaba un bloqueo circular -- no se
+            // podia elegir noviembre porque no tenia datos, y no tenia datos
+            // porque nadie podia elegirlo -- y el mes en curso quedaba
+            // inalcanzable hasta que alguien tocara la base a mano.
+            const sinDatos = m.fase === 'sin_datos';
             return (
               <button
                 key={m.periodo}
                 type="button"
-                disabled={deshabilitado || (!onElegirMes && !activo)}
+                disabled={!mesSeleccionable({ activo, puedeElegir: Boolean(onElegirMes) })}
                 onClick={() => !activo && onElegirMes?.(m.periodo)}
                 className={`rounded-lg border px-4 py-3 text-left transition-colors ${
                   activo
                     ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500'
-                    : deshabilitado
-                      ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-70'
+                    : sinDatos
+                      ? 'border-dashed border-slate-300 bg-slate-50 hover:border-emerald-300 hover:bg-white'
                       : 'border-slate-200 bg-white hover:border-emerald-300 hover:bg-slate-50'
                 }`}
               >
@@ -243,6 +250,11 @@ export default function PestanaParametros({
                 </span>
                 {m.fase === 'terminado' && (
                   <p className="mt-2 text-[11px] text-amber-600">Pide una extracción nueva.</p>
+                )}
+                {sinDatos && !activo && (
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    Eligelo y pulsa Actualizar para traer sus datos.
+                  </p>
                 )}
               </button>
             );
