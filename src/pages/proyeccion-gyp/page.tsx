@@ -1121,9 +1121,14 @@ export default function ProyeccionGypPage() {
               >
                 <span className="mr-1.5 font-mono text-xs text-slate-400">{t.n}</span>
                 {t.label}
-                {esAlertas && avisos.length > 0 && (
+                {/* P13 · El globo cuenta ALERTAS del catálogo, que es lo que la
+                    pestaña enseña. Contaba `avisos`, que son los avisos de las
+                    reglas (Combinadas repetidas, empresas sin regla de ingreso)
+                    y se muestran en la pestaña Reglas: la pestaña decía 6 con
+                    las tres cajas en cero y no había nada que mirar. */}
+                {esAlertas && alertas.length > 0 && (
                   <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] text-amber-700">
-                    {avisos.length}
+                    {alertas.length}
                   </span>
                 )}
               </button>
